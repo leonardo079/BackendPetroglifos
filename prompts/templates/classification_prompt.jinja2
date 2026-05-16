@@ -1,0 +1,22 @@
+### CONTEXTO ARQUEOLÓGICO RECUPERADO
+{% for chunk in retrieved_chunks %}
+[{{ loop.index }}] {{ chunk.text }} — Fuente: {{ chunk.source }}
+{% endfor %}
+
+### DESCRIPCIÓN DEL MOTIVO
+{{ motif_description }}
+
+### FORMAS DETECTADAS
+{{ detected_shapes | join(", ") }}
+
+### COINCIDENCIAS ICONOGRÁFICAS
+{% for match in similarity_matches %}
+- {{ match.reference_name }} (similitud: {{ match.similarity_score }})
+{% endfor %}
+
+### INSTRUCCIÓN
+Clasifica el petroglifo usando ÚNICAMENTE estas categorías:
+Antropomorfo | Zoomorfo | Geométrico | Astronómico | Fitomorfo | Híbrido | Indeterminado
+
+Responde en JSON:
+{"taxonomy": "...", "confidence": 0.0, "justification": "..."}
