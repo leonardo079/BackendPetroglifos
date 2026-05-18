@@ -15,8 +15,8 @@
 {% endfor %}
 
 ### INSTRUCCIÓN
-Clasifica el petroglifo usando ÚNICAMENTE estas categorías:
-Antropomorfo | Zoomorfo | Geométrico | Astronómico | Fitomorfo | Híbrido | Indeterminado
+Clasifica el petroglifo usando ÚNICAMENTE estas categorías válidas:
+{{ valid_categories | join(" | ") }}
 
-Responde en JSON:
-{"taxonomy": "...", "confidence": 0.0, "justification": "..."}
+Responde EXCLUSIVAMENTE con un objeto JSON válido (sin texto adicional, sin bloques markdown):
+{"taxonomy": "<una de las categorías anteriores>", "confidence": <float entre 0.0 y 1.0>, "justification": "<razón basada en el contexto arqueológico>"}

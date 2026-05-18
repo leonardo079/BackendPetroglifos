@@ -31,6 +31,9 @@ class ArchaeologicalChunk(Base):
                  postgresql_using="ivfflat",
                  postgresql_with={"lists": 100},
                  postgresql_ops={"embedding": "vector_cosine_ops"}),
+        # Restricción de unicidad para evitar duplicados al reingestar el mismo documento.
+        # Permite usar INSERT ... ON CONFLICT DO NOTHING en el adaptador.
+        sa.UniqueConstraint("source_document", "chunk_index", name="uq_chunk_source_index"),
     )
 
 
@@ -40,7 +43,7 @@ class RupestranSiteModel(Base):
     __tablename__ = "rupestrian_sites"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False, unique=True)
     municipality: Mapped[str] = mapped_column(sa.String(255), default="")
     department: Mapped[str] = mapped_column(sa.String(255), default="")
     latitude: Mapped[float | None] = mapped_column(sa.Float, nullable=True)

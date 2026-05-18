@@ -47,10 +47,23 @@ class CulturalAnalystAgent(BaseAgent):
         similarity_matches: list[dict] = payload.get("similarity_matches", [])
 
         try:
-            # 1. Recuperar contexto del corpus arqueológico
+            # 1. Recuperar contexto del corpus arqueológico.
+            # Si A3 devuelvió matches con taxonomía dominante, usarla como hint
+            # para que el retriever enriquezca la consulta y mejore el recall.
+            taxonomy_hint = ""
+            if similarity_matches:
+                tax_counts: dict[str, int] = {}
+                for m in similarity_matches:
+                    t = m.get("taxonomy", "")
+                    if t:
+                        tax_counts[t] = tax_counts.get(t, 0) + 1
+                if tax_counts:
+                    taxonomy_hint = max(tax_counts, key=tax_counts.get)
+
             chunks = await self._retriever.retrieve_for_motif(
                 motif_description=motif_description,
                 detected_shapes=detected_shapes,
+                taxonomy_hint=taxonomy_hint,
             )
             low_context = len(chunks) < 2
 
@@ -85,7 +98,14 @@ class CulturalAnalystAgent(BaseAgent):
 
             # 5. Persistir en base de datos si hay sesión disponible
             if self._session:
-                await self._persist(petroglyph_id, result, prompt, elapsed)
+                try:
+                    await self._persist(petroglyph_id, result, prompt, elapsed)
+                except Exception as persist_err:
+                    log.warning(
+                        "a4_persist_failed",
+                        error=str(persist_err),
+                        task_id=input.task_id,
+                    )
 
             log.info("a4_analyst_done",
                      task_id=input.task_id,
@@ -146,7 +166,18 @@ class CulturalAnalystAgent(BaseAgent):
         prompt: str,
         latency_ms: int,
     ) -> None:
-        from infrastructure.database.models.models import LLMClassification, PromptLog
+        from infrastructure.database.models.models import LLMClassification, PromptLog, PetroglyphModel
+
+        # LLMClassification tiene FK NOT NULL hacia petroglyphs.id.
+        # El pipeline no crea PetroglyphModel explícitamente (usa task_id como ID),
+        # así que lo creamos como stub si aún no existe para satisfacer la FK.
+        existing = await self._session.get(PetroglyphModel, petroglyph_id)
+        if not existing:
+            stub = PetroglyphModel(id=petroglyph_id)
+            self._session.add(stub)
+            await self._session.flush()
+            log.debug("a4_petroglyph_stub_created", petroglyph_id=petroglyph_id)
+
         classification = LLMClassification(
             petroglyph_id=petroglyph_id,
             taxonomy=result.taxonomy,

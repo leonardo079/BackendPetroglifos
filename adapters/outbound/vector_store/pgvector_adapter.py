@@ -60,18 +60,36 @@ class PgvectorAdapter(VectorStorePort):
         ]
 
     async def upsert(self, documents: list[dict]) -> None:
-        """Inserta fragmentos con sus embeddings en archaeological_chunks."""
+        """
+        Inserta fragmentos con sus embeddings en archaeological_chunks.
+
+        Usa INSERT ... ON CONFLICT DO NOTHING para que reingestar el mismo
+        documento sea idempotente: los chunks ya existentes se omiten silenciosamente.
+        Requiere la restricción uq_chunk_source_index en el modelo.
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        inserted = 0
+        skipped = 0
         for doc in documents:
-            chunk = ArchaeologicalChunk(
-                source_document=doc["source"],
-                chunk_text=doc["text"],
-                embedding=doc["embedding"],
-                chunk_index=doc.get("chunk_index", 0),
-                metadata_=doc.get("metadata", {}),
+            stmt = (
+                pg_insert(ArchaeologicalChunk)
+                .values(
+                    source_document=doc["source"],
+                    chunk_text=doc["text"],
+                    embedding=doc["embedding"],
+                    chunk_index=doc.get("chunk_index", 0),
+                    metadata_=doc.get("metadata", {}),
+                )
+                .on_conflict_do_nothing(constraint="uq_chunk_source_index")
             )
-            self._session.add(chunk)
+            result = await self._session.execute(stmt)
+            if result.rowcount:
+                inserted += 1
+            else:
+                skipped += 1
         await self._session.commit()
-        log.info("pgvector_upsert", count=len(documents))
+        log.info("pgvector_upsert", inserted=inserted, skipped=skipped, total=len(documents))
 
 
 class ImageVectorAdapter:

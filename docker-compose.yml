@@ -33,6 +33,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   worker:
     build: .
@@ -44,6 +50,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: python -m adapters.inbound.telegram_bot.bot
+    env_file: .env
+    environment:
+      # Sobreescribe la URL para que el bot use el nombre del servicio Docker
+      - API_BASE_URL=http://api:8000
+    volumes: [".:/app", "./storage:/app/storage"]
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

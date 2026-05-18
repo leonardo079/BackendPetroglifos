@@ -129,11 +129,17 @@ class PetroglyphOrchestrator:
     async def _run_a3(self, state: PetroglyphState) -> PetroglyphState:
         """A3: Comparar iconográficamente."""
         log.info("langgraph_node", node="a3_comparator", task_id=state["petroglyph_id"])
-        
+
+        # Usar la imagen reconstruida si existe (flujo post-A5), sino la preprocesada
+        best_image = (
+            state.get("reconstructed_image_path")
+            or state.get("preprocessed_image_path", "")
+        )
+
         agent_input = AgentInput(
             task_id=state["petroglyph_id"],
             payload={
-                "preprocessed_image_path": state.get("preprocessed_image_path", ""),
+                "preprocessed_image_path": best_image,
                 "site": state["site_metadata"].get("site", ""),
                 "municipality": state["site_metadata"].get("municipality", ""),
                 "site_id": state["site_metadata"].get("site_id", ""),
@@ -335,7 +341,7 @@ async def create_orchestrator(session) -> PetroglyphOrchestrator:
     # Agentes
     a1 = PreprocessorAgent()
     a2 = DetectorAgent()
-    a3 = ComparatorAgent(image_vector_adapter=image_vector, social_graph=social_graph)
+    a3 = ComparatorAgent(image_vector_adapter=image_vector, social_graph=social_graph, session=session)
     a4 = CulturalAnalystAgent(llm=llm, retriever=retriever, session=session)
     a5 = ReconstructorAgent()
     a6 = DocumentorAgent()

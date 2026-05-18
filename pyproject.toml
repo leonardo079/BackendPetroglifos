@@ -28,6 +28,7 @@ dependencies = [
     "weasyprint>=62",
     "pytesseract>=0.3",
     "pypdf>=4.0",
+    "pdf2image>=1.17",               # OCR de páginas escaneadas en PDFs (requiere poppler-utils en OS)
     # Visión computacional
     "opencv-python-headless>=4.9",
     "pillow>=10.0",
@@ -38,7 +39,7 @@ dependencies = [
     # Grafos sociales
     "networkx>=3.3",
     "pyvis>=0.3",
-    "community>=1.0",             # python-louvain (detección de comunidades)
+    "python-louvain>=0.16",        # PyPI: python-louvain → `from community import best_partition`
     # HTTP y async
     "httpx>=0.27",
     "tenacity>=8.3",              # retry con backoff exponencial

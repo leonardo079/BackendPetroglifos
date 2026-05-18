@@ -42,13 +42,37 @@ class DocumentIngester:
     # ── Extracción de texto ───────────────────────────────────────────────────
 
     def _extract_pdf(self, path: str) -> str:
+        """
+        Extrae texto de un PDF.
+        Si una página tiene texto escaso (< 50 chars) asume que está escaneada
+        e intenta extraerla mediante OCR con pytesseract.
+        """
+        try:
+            from pdf2image import convert_from_path  # type: ignore
+            _PDF2IMAGE_AVAILABLE = True
+        except ImportError:
+            _PDF2IMAGE_AVAILABLE = False
+
         reader = PdfReader(path)
         pages: list[str] = []
-        for page in reader.pages:
+        for page_num, page in enumerate(reader.pages):
             text = page.extract_text() or ""
             if len(text.strip()) < 50:
-                # Página probablemente escaneada — intentar OCR
-                log.warning("pdf_page_sparse_text", path=path)
+                if _PDF2IMAGE_AVAILABLE:
+                    try:
+                        images = convert_from_path(path, first_page=page_num + 1, last_page=page_num + 1, dpi=200)
+                        if images:
+                            ocr_text = pytesseract.image_to_string(images[0], lang="spa+eng")
+                            text = ocr_text
+                            log.info("pdf_page_ocr_applied", path=path, page=page_num)
+                    except Exception as ocr_err:
+                        log.warning("pdf_page_ocr_failed", path=path, page=page_num, error=str(ocr_err))
+                else:
+                    log.warning(
+                        "pdf_page_sparse_text_no_ocr",
+                        path=path, page=page_num,
+                        hint="Instala pdf2image + poppler para habilitar OCR en páginas escaneadas",
+                    )
             pages.append(text)
         return "\n\n".join(pages)
 

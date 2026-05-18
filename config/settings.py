@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     env: str = "development"
     log_level: str = "INFO"
     max_record_sheet_minutes: int = 45
+    # URL base de la API FastAPI — usada por el bot de Telegram
+    # En Docker: http://api:8000  |  Local: http://localhost:8000
+    api_base_url: str = "http://localhost:8000"
 
 
 @lru_cache

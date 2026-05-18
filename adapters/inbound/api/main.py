@@ -2,15 +2,19 @@
 API FastAPI del Sistema de Petroglifos.
 
 Endpoints:
-    POST /classify          — Clasifica un petroglifo (async vía Celery)
-    POST /classify/sync     — Clasifica de forma síncrona (para pruebas)
-    GET  /tasks/{task_id}   — Consulta estado de una tarea Celery
-    POST /ingest            — Ingesta un documento al corpus RAG
-    GET  /sites             — Lista sitios rupestres registrados
-    GET  /sites/{site_id}   — Detalle de un sitio
-    GET  /graph             — Red social de similitud iconográfica
-    GET  /graph/export      — HTML interactivo del grafo (PyVis)
-    GET  /health            — Health check
+    POST /classify                      — Clasifica un petroglifo (async vía Celery)
+    POST /classify/sync                 — Clasifica de forma síncrona (para pruebas)
+    GET  /tasks/{task_id}               — Consulta estado de una tarea Celery
+    POST /ingest                        — Ingesta un documento al corpus RAG
+    GET  /sites                         — Lista sitios rupestres registrados
+    GET  /sites/{site_id}               — Detalle de un sitio (con conexiones del grafo)
+    GET  /graph                         — Red social de similitud iconográfica (JSON)
+    GET  /graph/export                  — HTML interactivo del grafo (PyVis)
+    GET  /graph/pagerank                — Ranking de centralidad PageRank por sitio
+    GET  /graph/communities             — Comunidades iconográficas (Louvain)
+    GET  /graph/betweenness             — Centralidad de intermediación (sitios puente)
+    GET  /graph/sites/{site_id}/similar — Sitios más similares a uno dado
+    GET  /health                        — Health check
 """
 from __future__ import annotations
 import uuid
@@ -340,20 +344,21 @@ async def get_site(
 
 # ── Grafo social ───────────────────────────────────────────────────────────────
 
-@app.get("/graph", tags=["Grafo Social"])
-async def get_graph(session: AsyncSession = Depends(get_session)) -> dict:
+async def _build_graph_from_db(session: AsyncSession):
     """
-    Retorna el grafo de similitud iconográfica entre sitios rupestres en formato JSON.
-    Incluye nodos (sitios), aristas (similitudes) y métricas (PageRank, comunidades).
+    Reconstruye el PetroglyphSocialGraph completo desde la BD.
+
+    Usa el nombre del sitio como ID de nodo (no el UUID) para que los edges
+    reconstruidos desde site_graph_edges conecten correctamente con los nodos.
     """
     from infrastructure.database.models.models import RupestranSiteModel, SiteGraphEdge
     from orchestrator.graph.petroglyph_graph import PetroglyphSocialGraph
 
-    sites_result = await session.execute(select(RupestranSiteModel))
-    sites = sites_result.scalars().all()
+    sites = list((await session.execute(select(RupestranSiteModel))).scalars().all())
+    edges = list((await session.execute(select(SiteGraphEdge))).scalars().all())
 
-    edges_result = await session.execute(select(SiteGraphEdge))
-    edges = edges_result.scalars().all()
+    # Índice UUID → nombre de sitio para reconstruir edges sin mismatch
+    id_to_name: dict = {s.id: s.name for s in sites}
 
     graph = PetroglyphSocialGraph()
     for site in sites:
@@ -367,13 +372,22 @@ async def get_graph(session: AsyncSession = Depends(get_session)) -> dict:
             longitude=site.longitude,
         )
     for edge in edges:
-        # Reconstruir nombre desde IDs (simplificado; en prod usar JOIN)
-        graph.add_or_update_edge(
-            str(edge.site_a_id),
-            str(edge.site_b_id),
-            weight=edge.weight,
-        )
+        name_a = id_to_name.get(edge.site_a_id)
+        name_b = id_to_name.get(edge.site_b_id)
+        if name_a and name_b:
+            taxonomy = (edge.shared_taxonomies or [None])[0] or ""
+            graph.add_or_update_edge(name_a, name_b, weight=edge.weight, taxonomy=taxonomy)
 
+    return graph
+
+
+@app.get("/graph", tags=["Grafo Social"])
+async def get_graph(session: AsyncSession = Depends(get_session)) -> dict:
+    """
+    Retorna el grafo de similitud iconográfica en formato JSON.
+    Incluye nodos (sitios), aristas (similitudes) y métricas del resumen.
+    """
+    graph = await _build_graph_from_db(session)
     return graph.to_dict()
 
 
@@ -381,27 +395,89 @@ async def get_graph(session: AsyncSession = Depends(get_session)) -> dict:
 async def export_graph_html(session: AsyncSession = Depends(get_session)) -> FileResponse:
     """
     Exporta una visualización interactiva del grafo como HTML (PyVis).
-    Descarga directa del archivo HTML.
+    Descarga directa del archivo HTML con física de partículas y tooltips.
     """
-    from infrastructure.database.models.models import RupestranSiteModel, SiteGraphEdge
-    from orchestrator.graph.petroglyph_graph import PetroglyphSocialGraph
-
-    sites_result = await session.execute(select(RupestranSiteModel))
-    edges_result = await session.execute(select(SiteGraphEdge))
-
-    graph = PetroglyphSocialGraph()
-    for site in sites_result.scalars():
-        graph.add_site(site.name, municipality=site.municipality, department=site.department,
-                       dominant_taxonomy=site.dominant_taxonomy,
-                       petroglyph_count=site.petroglyph_count)
-    for edge in edges_result.scalars():
-        graph.add_or_update_edge(str(edge.site_a_id), str(edge.site_b_id), edge.weight)
-
+    graph = await _build_graph_from_db(session)
     html_path = graph.export_html()
     if not html_path or not Path(html_path).exists():
         raise HTTPException(status_code=500, detail="Error generando el grafo HTML.")
-
     return FileResponse(html_path, media_type="text/html", filename="red_rupestre.html")
+
+
+@app.get("/graph/pagerank", tags=["Grafo Social"])
+async def get_graph_pagerank(session: AsyncSession = Depends(get_session)) -> dict:
+    """
+    Retorna el ranking de PageRank de los sitios en la red iconográfica.
+    Sitios con mayor score son los más centrales e influyentes en la red.
+    """
+    graph = await _build_graph_from_db(session)
+    pr = graph.pagerank()
+    if not pr:
+        return {"pagerank": {}, "top_site": None, "message": "Grafo sin datos suficientes"}
+    sorted_pr = sorted(pr.items(), key=lambda x: x[1], reverse=True)
+    return {
+        "pagerank": {site: round(score, 6) for site, score in sorted_pr},
+        "top_site": sorted_pr[0][0],
+    }
+
+
+@app.get("/graph/communities", tags=["Grafo Social"])
+async def get_graph_communities(session: AsyncSession = Depends(get_session)) -> dict:
+    """
+    Detecta comunidades iconográficas usando el algoritmo de Louvain.
+    Cada comunidad agrupa sitios con alta similitud estilística entre sí.
+    """
+    graph = await _build_graph_from_db(session)
+    communities = graph.communities()
+    return {
+        "communities": [sorted(list(c)) for c in communities],
+        "count": len(communities),
+    }
+
+
+@app.get("/graph/betweenness", tags=["Grafo Social"])
+async def get_graph_betweenness(session: AsyncSession = Depends(get_session)) -> dict:
+    """
+    Centralidad de intermediación: identifica sitios que actúan como puentes
+    iconográficos entre distintas regiones o tradiciones rupestres.
+    """
+    graph = await _build_graph_from_db(session)
+    bc = graph.betweenness_centrality()
+    if not bc:
+        return {"betweenness": {}, "top_bridge_site": None, "message": "Grafo sin aristas"}
+    sorted_bc = sorted(bc.items(), key=lambda x: x[1], reverse=True)
+    return {
+        "betweenness": {site: round(score, 6) for site, score in sorted_bc},
+        "top_bridge_site": sorted_bc[0][0],
+    }
+
+
+@app.get("/graph/sites/{site_id}/similar", tags=["Grafo Social"])
+async def get_similar_sites(
+    site_id: str,
+    top_k: int = 5,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    Retorna los sitios más similares iconográficamente a un sitio dado (por UUID).
+    Útil para explorar tradiciones rupestres comparadas.
+    """
+    from infrastructure.database.models.models import RupestranSiteModel
+
+    site_result = await session.execute(
+        select(RupestranSiteModel).where(RupestranSiteModel.id == site_id)
+    )
+    site = site_result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail=f"Sitio {site_id} no encontrado.")
+
+    graph = await _build_graph_from_db(session)
+    similar = graph.most_similar_sites(site.name, top_k=top_k)
+    return {
+        "site_id": site_id,
+        "site_name": site.name,
+        "similar_sites": similar,
+    }
 
 
 # ── Fichas ICANH ───────────────────────────────────────────────────────────────
