@@ -221,29 +221,28 @@ class PetroglyphOrchestrator:
 
     def _route_after_detection(self, state: PetroglyphState) -> Literal["a3_comparator", "a5_reconstructor"]:
         """
-        Router: decide si ir a A3 (comparación) o A5 (reconstrucción).
-        
+        Router condicional post-A2.
+
         Lógica:
-        - Si hay motivos visibles y NO hay deterioro severo → A3
-        - Si hay deterioro o no hay motivos visibles → A5
+        - Si la imagen ya fue reconstruida por A5 → A3 (comparación con corpus)
+        - Si hay motivos visibles y sin deterioro severo → A3
+        - Si hay deterioro o no hay motivos visibles → A5 (reconstrucción)
         """
         motifs_visible = state.get("motifs_visible", False)
         deterioration = state.get("_deterioration_detected", False)
-        
-        # Si ya pasó por reconstrucción, ir directo a A4 (analista)
-        # Esto previene loops infinitos A2 → A5 → A2
+
+        # Post-reconstrucción: la imagen ya fue restaurada por A5,
+        # continuar con comparación iconográfica sobre la imagen reconstruida.
         if state.get("reconstructed_image_path"):
-            log.info("router_decision", route="skip_to_a4_after_reconstruction")
-            # Hack: retornar A3 pero A3 → A4 directamente
-            # En producción, agregar nodo intermedio o ruta directa
+            log.info("router_decision", route="a3_comparator", reason="post_reconstruction")
             return "a3_comparator"
-        
+
         if motifs_visible and not deterioration:
             log.info("router_decision", route="a3_comparator", reason="motifs_visible")
             return "a3_comparator"
-        else:
-            log.info("router_decision", route="a5_reconstructor", reason="needs_reconstruction")
-            return "a5_reconstructor"
+
+        log.info("router_decision", route="a5_reconstructor", reason="needs_reconstruction")
+        return "a5_reconstructor"
 
     # ── Método principal de ejecución ─────────────────────────────────────────
 

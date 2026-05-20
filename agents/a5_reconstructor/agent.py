@@ -1,4 +1,4 @@
-"""A5 — Reconstructor GAN (activo solo cuando A2 detecta deterioro)."""
+"""A5 — Reconstructor de petroglifos (activo solo cuando A2 detecta deterioro)."""
 from __future__ import annotations
 import time
 import shutil
@@ -16,7 +16,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 class ReconstructorAgent(BaseAgent):
     """
-    Invoca la API GAN externa para reconstruir petroglifos deteriorados.
+    Invoca la API de reconstrucción externa (Keras U-Net + LaMa inpainting)
+    para restaurar petroglifos deteriorados.
     Si GAN_MOCK_MODE=true retorna la imagen preprocesada como fallback.
     """
     name = "a5_reconstructor"
@@ -72,8 +73,8 @@ class ReconstructorAgent(BaseAgent):
             )
 
     async def _call_gan_api(self, image_path: str, task_id: str) -> str:
-        """Envía la imagen a la API GAN y guarda el resultado."""
-        out_path = OUTPUT_DIR / f"{task_id}_reconstructed.jpg"
+        """Envía la imagen a la API de reconstrucción y guarda el resultado PNG."""
+        out_path = OUTPUT_DIR / f"{task_id}_reconstructed.png"
         async with httpx.AsyncClient(timeout=120.0) as client:
             headers = {}
             if settings.gan_api_key:
@@ -92,6 +93,6 @@ class ReconstructorAgent(BaseAgent):
         """Mock: copia la imagen preprocesada como si fuera la reconstruida."""
         if not image_path or not Path(image_path).exists():
             return image_path
-        out_path = OUTPUT_DIR / f"{task_id}_mock_reconstructed.jpg"
+        out_path = OUTPUT_DIR / f"{task_id}_mock_reconstructed.png"
         shutil.copy2(image_path, out_path)
         return str(out_path)

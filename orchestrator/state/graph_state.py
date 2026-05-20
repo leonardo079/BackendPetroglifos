@@ -14,6 +14,7 @@ class PetroglyphState(TypedDict, total=False):
     bounding_box: dict
     detection_confidence: float
     motifs_visible: bool
+    _deterioration_detected: bool   # usado por el router para decidir A3 vs A5
     # A3
     similarity_matches: list[dict]
     # A5

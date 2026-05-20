@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import cv2
 import numpy as np
+import httpx
 import structlog
 from agents.base_agent import BaseAgent, AgentInput, AgentOutput
 from config.settings import settings
@@ -57,16 +58,23 @@ class DetectorAgent(BaseAgent):
         if img is None:
             return AgentOutput(task_id=input.task_id, agent_name=self.name, result={}, status="error")
 
+        # 1. Detección de motivos (síncrona)
         if self._yolo is not None:
             detection = self._detect_yolo(img, image_path)
         else:
             detection = self._detect_heuristic(img)
+
+        # 2. Deterioro via API Keras /segmentPetroglyph (reemplaza Laplaciano)
+        deterioration = await self._check_deterioration_api(image_path)
+        detection.update(deterioration)
 
         elapsed = round((time.monotonic() - t0) * 1000)
         log.info("a2_detector_done",
                  task_id=input.task_id,
                  motifs_visible=detection["motifs_visible"],
                  shapes=detection["detected_shapes"],
+                 deterioration=detection["deterioration_detected"],
+                 segmentation_score=detection.get("segmentation_score"),
                  latency_ms=elapsed)
 
         return AgentOutput(
@@ -97,7 +105,6 @@ class DetectorAgent(BaseAgent):
             "bounding_boxes": boxes,
             "detection_confidence": max((b["confidence"] for b in boxes), default=0.0),
             "motif_description": self._describe(shapes),
-            "deterioration_detected": self._check_deterioration(img),
             "method": "yolov8",
         }
 
@@ -138,7 +145,6 @@ class DetectorAgent(BaseAgent):
             "bounding_boxes": boxes,
             "detection_confidence": 0.5 if boxes else 0.0,
             "motif_description": self._describe(shapes),
-            "deterioration_detected": self._check_deterioration(img),
             "method": "heuristic_opencv",
         }
 
@@ -151,8 +157,74 @@ class DetectorAgent(BaseAgent):
         parts = [f"{v} {k}{'s' if v > 1 else ''}" for k, v in counts.items()]
         return f"Se detectaron: {', '.join(parts)}."
 
-    def _check_deterioration(self, img: np.ndarray) -> bool:
-        """Heurística simple: alta entropía de bordes → posible deterioro."""
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        return laplacian_var < 50  # baja nitidez → posible deterioro
+    async def _check_deterioration_api(self, image_path: str) -> dict:
+        """
+        Consulta /segmentPetroglyph del servicio Keras y determina si la imagen
+        tiene deterioro significativo a partir del validation_score y los warnings
+        producidos por el modelo de segmentación.
+
+        Criterios de deterioro (cualquiera de los siguientes):
+          - validation_score < 0        : máscara de baja calidad
+          - segmentation_status == 'weak_segmentation'
+          - 'fragmented_mask' en warnings : surcos muy fragmentados
+          - 'weak_main_component' en warnings : componente principal débil
+          - area_percent < 2.0          : prácticamente sin petroglifo visible
+
+        Fallback (API no disponible): asume deterioro para forzar reconstrucción
+        y no perderse figuras dañadas.
+        """
+        segment_url = f"{settings.reconstruction_api_base_url}/segmentPetroglyph"
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(image_path, "rb") as f:
+                    response = await client.post(
+                        segment_url,
+                        data={"include_previews": "false"},
+                        files={"file": (Path(image_path).name, f, "image/jpeg")},
+                    )
+                response.raise_for_status()
+                data = response.json()
+
+            score = float(data.get("validation_score", 0.0))
+            status = str(data.get("segmentation_status", "ok"))
+            warnings: list[str] = data.get("validation_warnings", [])
+            area_percent = float(data.get("area_percent", 0.0))
+
+            deterioration_detected = (
+                score < 0
+                or status == "weak_segmentation"
+                or "fragmented_mask" in warnings
+                or "weak_main_component" in warnings
+                or area_percent < 2.0
+            )
+
+            log.info(
+                "a2_deterioration_api",
+                score=score,
+                status=status,
+                warnings=warnings,
+                deterioration=deterioration_detected,
+            )
+            return {
+                "deterioration_detected": deterioration_detected,
+                "segmentation_score": score,
+                "segmentation_status": status,
+                "segmentation_warnings": warnings,
+                "area_percent": area_percent,
+            }
+
+        except Exception as e:
+            log.warning(
+                "a2_deterioration_api_failed",
+                error=str(e),
+                fallback="assume_deteriorated",
+            )
+            # Conservador: si la API falla, asumir deterioro para no omitir
+            # figuras que necesiten reconstrucción.
+            return {
+                "deterioration_detected": True,
+                "segmentation_score": 0.0,
+                "segmentation_status": "unknown",
+                "segmentation_warnings": ["api_unavailable"],
+                "area_percent": 0.0,
+            }

@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     celery_result_backend: str = "redis://localhost:6379/1"
 
-    # GAN API
+    # Reconstruction API (ProyectoPetroglifosBack)
+    # En Docker: http://reconstruction:8001  |  Local: http://localhost:8001
+    reconstruction_api_base_url: str = "http://localhost:8001"
     gan_api_url: str = "http://localhost:8001/reconstruct"
     gan_api_key: str = ""
     gan_mock_mode: bool = True
