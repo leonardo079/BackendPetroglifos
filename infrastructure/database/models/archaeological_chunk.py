@@ -123,6 +123,30 @@ class LLMClassification(Base):
     petroglyph: Mapped["PetroglyphModel"] = relationship(back_populates="classifications")
 
 
+# ─── Descripciones enriquecidas de petroglifos (LLM + embedding) ────────────
+
+class PetroglyphDescriptionEmbedding(Base):
+    __tablename__ = "petroglyph_description_embeddings"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    petroglyph_id: Mapped[str] = mapped_column(sa.ForeignKey("petroglyphs.id"), nullable=False)
+    taxonomy: Mapped[str] = mapped_column(sa.String(100), default="Indeterminado")
+    detailed_description: Mapped[str] = mapped_column(sa.Text, default="")
+    probable_site: Mapped[str] = mapped_column(sa.String(255), default="")
+    site_probability: Mapped[float] = mapped_column(sa.Float, default=0.0)
+    key_figure_info: Mapped[list] = mapped_column(JSONB, default=list)
+    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=True)
+    rag_feedback: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        sa.Index("ix_petroglyph_desc_embedding", "embedding",
+                 postgresql_using="ivfflat",
+                 postgresql_with={"lists": 100},
+                 postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+
+
 # ─── Logs de prompts ──────────────────────────────────────────────────────────
 
 class PromptLog(Base):

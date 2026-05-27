@@ -2,21 +2,36 @@
 {% for chunk in retrieved_chunks %}
 [{{ loop.index }}] {{ chunk.text }} — Fuente: {{ chunk.source }}
 {% endfor %}
+{% if not retrieved_chunks %}
+No se recuperaron fragmentos del corpus para este caso.
+{% endif %}
 
 ### DESCRIPCIÓN DEL MOTIVO
 {{ motif_description }}
 
 ### FORMAS DETECTADAS
 {{ detected_shapes | join(", ") }}
+{% if not detected_shapes %}
+Sin formas detectadas explicitamente.
+{% endif %}
 
 ### COINCIDENCIAS ICONOGRÁFICAS
 {% for match in similarity_matches %}
-- {{ match.reference_name }} (similitud: {{ match.similarity_score }})
+- {{ match.reference_name }} | Sitio: {{ match.site_name }} | Taxonomía: {{ match.taxonomy }} | similitud: {{ match.similarity_score }}
 {% endfor %}
+{% if not similarity_matches %}
+Sin coincidencias iconograficas relevantes en el comparador visual.
+{% endif %}
 
 ### INSTRUCCIÓN
-Clasifica el petroglifo usando ÚNICAMENTE estas categorías válidas:
+Clasifica el petroglifo usando UNICAMENTE estas categorias validas:
 {{ valid_categories | join(" | ") }}
 
-Responde EXCLUSIVAMENTE con un objeto JSON válido (sin texto adicional, sin bloques markdown):
+Reglas:
+1) El valor de "taxonomy" debe ser exactamente una de las categorias validas.
+2) "confidence" debe estar entre 0.0 y 1.0.
+3) "justification" debe citar evidencia concreta (contexto recuperado, formas y/o similitudes).
+4) Si el contexto es debil o contradictorio, reduce confidence y explica la incertidumbre.
+
+Responde EXCLUSIVAMENTE con un objeto JSON valido (sin texto adicional, sin bloques markdown):
 {"taxonomy": "<una de las categorías anteriores>", "confidence": <float entre 0.0 y 1.0>, "justification": "<razón basada en el contexto arqueológico>"}

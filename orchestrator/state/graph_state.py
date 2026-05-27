@@ -22,6 +22,8 @@ class PetroglyphState(TypedDict, total=False):
     # A4
     a4_taxonomy_result: dict
     a4_requires_validation: bool
+    a4_petroglyph_description: dict
+    a4_rag_feedback: dict
     # A6
     icanh_pdf_url: str
     icanh_json: dict
