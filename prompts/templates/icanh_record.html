@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ficha ICANH Petroglifo</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      margin: 28px;
+      color: #1f2937;
+      background: #f8fafc;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0 0 12px 0;
+      color: #0f172a;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 10px;
+      font-size: 24px;
+    }
+    h2 {
+      margin-top: 0;
+      color: #1e293b;
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 8px 12px;
+    }
+    .k {
+      color: #475569;
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      background: #e0f2fe;
+      color: #0c4a6e;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    ul {
+      margin: 8px 0 0 20px;
+      padding: 0;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+    .warn {
+      border-left: 4px solid #f59e0b;
+      background: #fffbeb;
+      padding: 10px 12px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Ficha de Registro ICANH - Petroglifo</h1>
+    <div class="grid">
+      <div class="k">ID</div><div>{{ petroglyph_id }}</div>
+      <div class="k">Sitio</div><div>{{ site }}, {{ municipality }}, {{ department }}</div>
+      <div class="k">Fecha de generacion</div><div>{{ generation_date }}</div>
+      <div class="k">Taxonomia</div><div><span class="badge">{{ taxonomy }}</span></div>
+      <div class="k">Confianza</div><div>{{ (confidence * 100) | round(1) }}%</div>
+      <div class="k">Estado de conservacion</div><div>{{ conservation_status }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Justificacion arqueologica</h2>
+    <p>{{ justification or 'No disponible.' }}</p>
+  </div>
+
+  <div class="card">
+    <h2>Descripcion tecnica del petroglifo</h2>
+    <p>{{ petroglyph_description.detailed_description if petroglyph_description else 'No disponible.' }}</p>
+    <div class="grid">
+      <div class="k">Sitio probable</div>
+      <div>{{ petroglyph_description.probable_site if petroglyph_description else 'No definido' }}</div>
+      <div class="k">Probabilidad de sitio</div>
+      <div>
+        {% if petroglyph_description %}
+          {{ (petroglyph_description.site_probability * 100) | round(1) }}%
+        {% else %}
+          0.0%
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Informacion clave de la figura</h2>
+    <ul>
+      {% if petroglyph_description and petroglyph_description.key_figure_info %}
+        {% for item in petroglyph_description.key_figure_info %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      {% else %}
+        <li>No disponible.</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Retroalimentacion RAG vs descripcion</h2>
+    <div class="grid">
+      <div class="k">Consistencia promedio</div>
+      <div>{{ (rag_feedback.avg_similarity * 100) | round(1) if rag_feedback else 0.0 }}%</div>
+      <div class="k">Etiqueta</div>
+      <div>{{ rag_feedback.consistency_label if rag_feedback else 'N/A' }}</div>
+    </div>
+    <ul>
+      {% if rag_feedback and rag_feedback.top_matches %}
+        {% for match in rag_feedback.top_matches %}
+          <li>{{ match.source }} (similitud: {{ (match.similarity * 100) | round(1) }}%)</li>
+        {% endfor %}
+      {% else %}
+        <li>Sin evidencia de alineacion.</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Formas detectadas</h2>
+    <ul>
+      {% if detected_shapes %}
+        {% for shape in detected_shapes %}
+          <li>{{ shape }}</li>
+        {% endfor %}
+      {% else %}
+        <li>No se detectaron formas.</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Coincidencias iconograficas</h2>
+    <ul>
+      {% if similarity_matches %}
+        {% for match in similarity_matches %}
+          <li>{{ match.reference_name }} - {{ match.site_name }} ({{ (match.similarity_score * 100) | round(1) }}%)</li>
+        {% endfor %}
+      {% else %}
+        <li>Sin coincidencias en el corpus de referencia.</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  {% if requires_expert_validation %}
+  <div class="card warn">
+    Esta ficha requiere validacion por un arqueologo experto.
+  </div>
+  {% endif %}
+</body>
+</html>

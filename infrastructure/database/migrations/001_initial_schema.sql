@@ -85,6 +85,24 @@ CREATE TABLE llm_classifications (
     created_at           TIMESTAMPTZ DEFAULT now()
 );
 
+-- ── Descripción LLM del petroglifo + embedding (separado de RAG) ───────────
+CREATE TABLE petroglyph_description_embeddings (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    petroglyph_id        UUID NOT NULL REFERENCES petroglyphs(id),
+    taxonomy             TEXT DEFAULT 'Indeterminado',
+    detailed_description TEXT DEFAULT '',
+    probable_site        TEXT DEFAULT '',
+    site_probability     FLOAT DEFAULT 0.0,
+    key_figure_info      JSONB DEFAULT '[]',
+    embedding            VECTOR(768),
+    rag_feedback         JSONB DEFAULT '{}',
+    created_at           TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX ix_petroglyph_desc_embedding
+    ON petroglyph_description_embeddings
+    USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+
 -- ── Logs de prompts enviados a Gemini ────────────────────────
 CREATE TABLE prompt_logs (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -37,6 +37,8 @@ class DocumentorAgent(BaseAgent):
             "taxonomy": p.get("taxonomy", "Indeterminado"),
             "confidence": p.get("confidence", 0.0),
             "justification": p.get("justification", ""),
+            "petroglyph_description": p.get("petroglyph_description", {}),
+            "rag_feedback": p.get("rag_feedback", {}),
             "detected_shapes": p.get("detected_shapes", []),
             "similarity_matches": p.get("similarity_matches", []),
             "conservation_status": p.get("conservation_status", "Regular"),
@@ -100,11 +102,21 @@ class DocumentorAgent(BaseAgent):
 
     def _fallback_html(self, r: dict) -> str:
         confidence_pct = round(r["confidence"] * 100, 1)
+        desc = r.get("petroglyph_description", {})
+        rag_feedback = r.get("rag_feedback", {})
+        rag_avg = round(float(rag_feedback.get("avg_similarity", 0.0)) * 100, 1)
         shapes_html = "".join(f"<li>{s}</li>" for s in r["detected_shapes"])
         matches_html = "".join(
             f"<li>{m.get('reference_name', '?')} — {m.get('site_name', '?')} "
             f"(similitud: {round(m.get('similarity_score', 0)*100, 1)}%)</li>"
             for m in r["similarity_matches"]
+        )
+        key_info_html = "".join(
+            f"<li>{item}</li>" for item in desc.get("key_figure_info", [])
+        )
+        rag_top_html = "".join(
+            f"<li>{m.get('source', '?')} (similitud: {round(m.get('similarity', 0)*100, 1)}%)</li>"
+            for m in rag_feedback.get("top_matches", [])
         )
         return f"""<!DOCTYPE html>
 <html lang="es">
@@ -142,6 +154,23 @@ class DocumentorAgent(BaseAgent):
 
 <h2>Justificación arqueológica</h2>
 <p>{r["justification"] or "No disponible."}</p>
+
+<h2>Descripción técnica del petroglifo (LLM)</h2>
+<p>{desc.get("detailed_description", "No disponible.")}</p>
+<table>
+    <tr><td>Sitio probable</td><td>{desc.get("probable_site", "No definido")}</td></tr>
+    <tr><td>Probabilidad de sitio</td><td>{round(float(desc.get("site_probability", 0.0))*100, 1)}%</td></tr>
+</table>
+
+<h2>Información clave de la figura</h2>
+<ul>{key_info_html or "<li>No disponible.</li>"}</ul>
+
+<h2>Retroalimentacion RAG <-> descripcion</h2>
+<table>
+    <tr><td>Consistencia promedio</td><td>{rag_avg}%</td></tr>
+    <tr><td>Etiqueta</td><td>{rag_feedback.get("consistency_label", "N/A")}</td></tr>
+</table>
+<ul>{rag_top_html or "<li>Sin evidencia de alineación.</li>"}</ul>
 
 <h2>Formas detectadas</h2>
 <ul>{shapes_html or "<li>No se detectaron formas.</li>"}</ul>

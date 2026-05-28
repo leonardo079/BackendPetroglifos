@@ -161,12 +161,15 @@ class PetroglyphOrchestrator:
                 "motif_description": state.get("motif_description", ""),
                 "detected_shapes": state.get("detected_shapes", []),
                 "similarity_matches": state.get("similarity_matches", []),
+                "site_metadata": state.get("site_metadata", {}),
             },
         )
         result = await self._a4.run(agent_input)
         
         state["a4_taxonomy_result"] = result.result
         state["a4_requires_validation"] = result.result.get("requires_validation", True)
+        state["a4_petroglyph_description"] = result.result.get("petroglyph_description", {})
+        state["a4_rag_feedback"] = result.result.get("rag_feedback", {})
         return state
 
     async def _run_a5(self, state: PetroglyphState) -> PetroglyphState:
@@ -206,6 +209,8 @@ class PetroglyphOrchestrator:
             "confidence": state["a4_taxonomy_result"].get("confidence", 0.0),
             "justification": state["a4_taxonomy_result"].get("justification", ""),
             "requires_validation": state.get("a4_requires_validation", True),
+            "petroglyph_description": state.get("a4_petroglyph_description", {}),
+            "rag_feedback": state.get("a4_rag_feedback", {}),
             "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
             "researcher_notes": state["site_metadata"].get("researcher_notes", ""),
         }
@@ -343,7 +348,7 @@ async def create_orchestrator(session) -> PetroglyphOrchestrator:
     a1 = PreprocessorAgent()
     a2 = DetectorAgent()
     a3 = ComparatorAgent(image_vector_adapter=image_vector, social_graph=social_graph, session=session)
-    a4 = CulturalAnalystAgent(llm=llm, retriever=retriever, session=session)
+    a4 = CulturalAnalystAgent(llm=llm, retriever=retriever, embedder=embedder, session=session)
     a5 = ReconstructorAgent()
     a6 = DocumentorAgent()
 

@@ -1,0 +1,45 @@
+### CLASIFICACION PREVIA DEL PETROGLIFO
+Taxonomia: {{ taxonomy }}
+Confianza: {{ confidence }}
+Justificacion: {{ justification }}
+
+### CONTEXTO VISUAL
+Descripcion del motivo: {{ motif_description }}
+Formas detectadas: {{ detected_shapes | join(', ') }}
+{% if not detected_shapes %}
+Sin formas detectadas explicitamente.
+{% endif %}
+
+### CONTEXTO DEL SITIO DE ORIGEN
+Sitio reportado: {{ site_metadata.site or '' }}
+Municipio: {{ site_metadata.municipality or '' }}
+Departamento: {{ site_metadata.department or '' }}
+Coordenadas: {{ site_metadata.gps_coordinates or {} }}
+
+### COINCIDENCIAS ICONOGRAFICAS
+{% for match in similarity_matches %}
+- Referencia: {{ match.reference_name }} | Sitio: {{ match.site_name }} | Taxonomia: {{ match.taxonomy }} | Similitud: {{ match.similarity_score }}
+{% endfor %}
+{% if not similarity_matches %}
+Sin coincidencias iconograficas relevantes del comparador.
+{% endif %}
+
+### INSTRUCCION
+Genera una descripcion arqueologica detallada del petroglifo, incorporando:
+1) Lectura formal de la figura y rasgos visuales relevantes.
+2) Probabilidad de sitio arqueologico mas probable (sitio y valor entre 0.0 y 1.0).
+3) Informacion clave de la figura para documentacion experta.
+4) Si la evidencia es limitada, explicita incertidumbre en la redaccion.
+
+Reglas de salida:
+- No inventes sitios ni rasgos no respaldados por la evidencia dada.
+- key_figure_info debe ser una lista de 3 a 6 puntos breves y tecnicos.
+- site_probability debe ser float estricto en [0.0, 1.0].
+
+Responde EXCLUSIVAMENTE con JSON valido, sin texto adicional:
+{
+  "detailed_description": "<descripcion detallada y tecnica>",
+  "probable_site": "<sitio arqueologico mas probable>",
+  "site_probability": <float entre 0.0 y 1.0>,
+  "key_figure_info": ["<dato clave 1>", "<dato clave 2>"]
+}
