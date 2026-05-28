@@ -1,6 +1,7 @@
 """Configuración centralizada via pydantic-settings + .env."""
 from __future__ import annotations
 from functools import lru_cache
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,11 +28,16 @@ class Settings(BaseSettings):
     storage_endpoint: str = "http://localhost:9000"
     storage_access_key: str = "minioadmin"
     storage_secret_key: str = "minioadmin"
+    cloudinary_cloud_name: str = ""
+    cloudinary_api_key: str = ""
+    cloudinary_api_secret: str = ""
+    cloudinary_image_folder: str = "petroglifos/uploads"
+    cloudinary_pdf_folder: str = "petroglifos/fichas"
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/1"
+    celery_broker_url: str | None = None
+    celery_result_backend: str | None = None
 
     # Reconstruction API (ProyectoPetroglifosBack)
     # En Docker: http://reconstruction:8001  |  Local: http://localhost:8001
@@ -50,6 +56,15 @@ class Settings(BaseSettings):
     # URL base de la API FastAPI — usada por el bot de Telegram
     # En Docker: http://api:8000  |  Local: http://localhost:8000
     api_base_url: str = "http://localhost:8000"
+
+    @model_validator(mode="after")
+    def _fill_redis_defaults(self) -> "Settings":
+        """Permite usar REDIS_URL como fuente de verdad para Celery."""
+        if not self.celery_broker_url:
+            self.celery_broker_url = self.redis_url
+        if not self.celery_result_backend:
+            self.celery_result_backend = self.redis_url
+        return self
 
 
 @lru_cache

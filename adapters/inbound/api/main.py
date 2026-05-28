@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from infrastructure.database.session import get_session
 from infrastructure.observability.logging_config import configure_logging
+from infrastructure.storage.cloudinary_service import upload_image
 
 configure_logging()
 log = structlog.get_logger(__name__)
@@ -171,6 +172,7 @@ async def classify_with_upload(
     suffix = Path(file.filename or "image.jpg").suffix or ".jpg"
     dest = UPLOAD_DIR / f"{task_id}{suffix}"
     dest.write_bytes(await file.read())
+    cloudinary_url = upload_image(dest, public_id=task_id)
 
     site_metadata = {
         "site": site,
@@ -183,7 +185,12 @@ async def classify_with_upload(
         args=[task_id, str(dest), site_metadata],
         task_id=task_id,
     )
-    log.info("api_classify_upload_enqueued", task_id=task_id, filename=file.filename)
+    log.info(
+        "api_classify_upload_enqueued",
+        task_id=task_id,
+        filename=file.filename,
+        cloudinary_url=cloudinary_url or None,
+    )
     return ClassifyResponse(
         task_id=task_id,
         status="queued",

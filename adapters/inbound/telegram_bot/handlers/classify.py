@@ -292,8 +292,9 @@ async def _send_result(
         )
         text += SIMILARITY_BLOCK.format(matches=match_lines)
 
-    pdf_url = result.get("icanh_pdf_url", "")
-    if pdf_url:
+    pdf_local_path = result.get("icanh_pdf_url", "")
+    pdf_cloudinary_url = result.get("icanh_pdf_cloudinary_url", "")
+    if pdf_local_path or pdf_cloudinary_url:
         text += RESULT_PDF_NOTE
 
     # Editar el mensaje de "procesando" con el resultado final
@@ -305,8 +306,21 @@ async def _send_result(
     )
 
     # Adjuntar PDF si existe en el sistema de archivos
-    if pdf_url:
-        pdf_path = Path(pdf_url)
+    if pdf_cloudinary_url:
+        try:
+            await app.bot.send_document(
+                chat_id=chat_id,
+                document=pdf_cloudinary_url,
+                filename=f"ficha_icanh_{task_id}.pdf",
+                caption="📄 Ficha ICANH generada automáticamente.",
+            )
+            log.info("bot_pdf_sent_cloudinary", task_id=task_id)
+            return
+        except Exception as exc:
+            log.warning("bot_pdf_cloudinary_send_error", task_id=task_id, error=str(exc))
+
+    if pdf_local_path:
+        pdf_path = Path(pdf_local_path)
         if pdf_path.exists():
             try:
                 with pdf_path.open("rb") as f:
@@ -315,7 +329,7 @@ async def _send_result(
                         document=f,
                         filename=f"ficha_icanh_{task_id}.pdf",
                         caption="📄 Ficha ICANH generada automáticamente.",
-                    )
+                )
                 log.info("bot_pdf_sent", task_id=task_id)
             except Exception as exc:
                 log.warning("bot_pdf_send_error", task_id=task_id, error=str(exc))

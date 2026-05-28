@@ -214,6 +214,7 @@ class PetroglyphOrchestrator:
         result = await self._a6.run(agent_input)
         
         state["icanh_pdf_url"] = result.result.get("icanh_pdf_url", "")
+        state["icanh_pdf_cloudinary_url"] = result.result.get("icanh_pdf_cloudinary_url", "")
         state["icanh_json"] = result.result.get("icanh_record", {})
         return state
 
@@ -290,6 +291,7 @@ class PetroglyphOrchestrator:
                 "total_time_ms": elapsed,
                 "classification": final_state["a4_taxonomy_result"],
                 "icanh_pdf_url": final_state.get("icanh_pdf_url", ""),
+                "icanh_pdf_cloudinary_url": final_state.get("icanh_pdf_cloudinary_url", ""),
                 "icanh_json": final_state.get("icanh_json", {}),
             }
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import structlog
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from agents.base_agent import BaseAgent, AgentInput, AgentOutput
+from infrastructure.storage.cloudinary_service import upload_pdf
 
 log = structlog.get_logger(__name__)
 
@@ -58,15 +59,18 @@ class DocumentorAgent(BaseAgent):
             html_content = self._render_html(record)
             self._generate_pdf(html_content, pdf_path)
             pdf_url = str(pdf_path)
+            pdf_cloudinary_url = upload_pdf(pdf_path, public_id=f"{task_id}_ficha")
         except Exception as e:
             log.warning("pdf_generation_failed", error=str(e), task_id=task_id)
             pdf_url = ""
+            pdf_cloudinary_url = ""
 
         elapsed = round((time.monotonic() - t0) * 1000)
         log.info("a6_documentor_done",
                  task_id=task_id,
                  json_path=str(json_path),
                  pdf_path=pdf_url,
+                 pdf_cloudinary_url=pdf_cloudinary_url or None,
                  latency_ms=elapsed)
 
         return AgentOutput(
@@ -74,6 +78,7 @@ class DocumentorAgent(BaseAgent):
             agent_name=self.name,
             result={
                 "icanh_pdf_url": pdf_url,
+                "icanh_pdf_cloudinary_url": pdf_cloudinary_url,
                 "icanh_json_path": str(json_path),
                 "icanh_record": record,
             },

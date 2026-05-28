@@ -24,4 +24,5 @@ class PetroglyphState(TypedDict, total=False):
     a4_requires_validation: bool
     # A6
     icanh_pdf_url: str
+    icanh_pdf_cloudinary_url: str
     icanh_json: dict
