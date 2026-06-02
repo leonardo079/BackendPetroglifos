@@ -55,6 +55,22 @@ dependencies = [
     "rich>=13.0",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "adapters",
+    "agents",
+    "config",
+    "core",
+    "graphs",
+    "infrastructure",
+    "orchestrator",
+    "rag",
+]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

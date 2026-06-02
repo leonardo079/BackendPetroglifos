@@ -207,6 +207,43 @@ async def classify_with_upload(
     )
 
 
+@app.post("/detect", tags=["Clasificación"])
+async def detect_only(file: UploadFile = File(...)) -> dict:
+    """
+    Ejecuta solo A1 (preprocesado) + A2 (detección YOLO) sobre una imagen subida.
+
+    Útil para probar el detector de motivos de forma aislada, sin necesidad de
+    base de datos, LLM ni Celery. Devuelve la clase detectada, la confianza y el
+    diagnóstico de deterioro (que dependerá de si el servicio Keras está activo).
+    """
+    from agents.a1_preprocessor.agent import PreprocessorAgent
+    from agents.a2_detector.agent import DetectorAgent
+    from agents.base_agent import AgentInput
+
+    task_id = str(uuid.uuid4())
+    suffix = Path(file.filename or "image.jpg").suffix or ".jpg"
+    dest = UPLOAD_DIR / f"{task_id}{suffix}"
+    dest.write_bytes(await file.read())
+
+    a1 = PreprocessorAgent()
+    pre = await a1.run(AgentInput(task_id=task_id, payload={"image_path": str(dest)}))
+    pre_path = pre.result.get("preprocessed_image_path", str(dest))
+
+    a2 = DetectorAgent()
+    det = await a2.run(AgentInput(task_id=task_id, payload={"preprocessed_image_path": pre_path}))
+
+    log.info("api_detect_only", task_id=task_id, filename=file.filename, status=det.status)
+    return {
+        "task_id": task_id,
+        "preprocessing": {
+            "status": pre.status,
+            "preprocessed_image_path": pre_path,
+        },
+        "detection": det.result,
+        "detection_metadata": det.metadata,
+    }
+
+
 @app.post("/classify/sync", response_model=ClassifyResponse, tags=["Clasificación"])
 async def classify_sync(
     payload: ClassifyRequest,

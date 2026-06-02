@@ -23,6 +23,20 @@ SHAPE_LABELS = {
     6: "Hexágono",
 }
 
+# Mapeo de nombres del modelo (minúsculas, sin tildes) al vocabulario
+# controlado de TaxonomyCategory (mayúsculas, con tildes).
+_TAXONOMY_MAP = {
+    "antropomorfo": "Antropomorfo",
+    "zoomorfo":     "Zoomorfo",
+    "geometrico":   "Geométrico",
+    "fitomorfo":    "Fitomorfo",
+    "astronomico":  "Astronómico",
+    "hibrido":      "Híbrido",
+}
+
+# Confianza mínima para incluir clases alternativas (top-2, top-3) en detected_shapes.
+_ALT_CLASS_THRESHOLD = 0.20
+
 
 class DetectorAgent(BaseAgent):
     name = "a2_detector"
@@ -83,7 +97,10 @@ class DetectorAgent(BaseAgent):
 
         # 1. Detección de motivos (síncrona)
         if self._yolo is not None:
-            detection = self._detect_yolo(img, image_path)
+            if self._is_cls_model():
+                detection = self._detect_yolo_cls(img, image_path)
+            else:
+                detection = self._detect_yolo(img, image_path)
         else:
             detection = self._detect_heuristic(img)
 
@@ -107,6 +124,84 @@ class DetectorAgent(BaseAgent):
             status="success",
             metadata={"latency_ms": elapsed, "method": detection.get("method", "unknown")},
         )
+
+    def _is_cls_model(self) -> bool:
+        """Determina si el modelo cargado es de clasificación (no detección)."""
+        # Método 1: atributo task (disponible en Ultralytics >= 8.0)
+        if getattr(self._yolo, "task", None) == "classify":
+            return True
+        # Método 2: inspección de la última capa del modelo
+        model_obj = getattr(self._yolo, "model", None)
+        if model_obj is not None:
+            head = getattr(model_obj, "model", None)
+            if head is not None:
+                children = list(head.children())
+                if children and "Classify" in type(children[-1]).__name__:
+                    return True
+        return False
+
+    def _detect_yolo_cls(self, img: np.ndarray, image_path: str) -> dict:
+        """Procesa la salida de un modelo YOLOv8-cls (r.probs)."""
+        h, w = img.shape[:2]
+        results = self._yolo(image_path, verbose=False)
+
+        shapes: list[str] = []
+        boxes: list[dict] = []
+        top_confidence = 0.0
+
+        for r in results or []:
+            probs = getattr(r, "probs", None)
+            if probs is None:
+                continue
+
+            names = self._yolo.names
+            top1_idx = int(probs.top1)
+            top1_conf = float(probs.top1conf)
+            top1_label = self._canonicalize(names[top1_idx])
+
+            # Clase principal: solo se reporta como motivo visible si supera
+            # el umbral. Si no, la imagen irá a A5 y no añadimos alternativas
+            # de baja confianza que contradigan motifs_visible=False.
+            if top1_conf < settings.confidence_threshold:
+                continue
+
+            shapes.append(top1_label)
+            boxes.append({
+                "label": top1_label,
+                "confidence": round(top1_conf, 4),
+                "xyxy": [0, 0, w, h],
+            })
+            top_confidence = max(top_confidence, top1_conf)
+
+            # Clases alternativas (top-2, top-3...) con confianza > 0.20,
+            # para dar más contexto a A4.
+            for idx, conf in zip(list(probs.top5), [float(c) for c in probs.top5conf]):
+                if idx == top1_idx or conf < _ALT_CLASS_THRESHOLD:
+                    continue
+                label = self._canonicalize(names[idx])
+                if label not in shapes:
+                    shapes.append(label)
+
+        log.info(
+            "a2_yolo_cls_result",
+            image_path=image_path,
+            classes=shapes,
+            confidence=top_confidence,
+        )
+
+        return {
+            "motifs_visible": len(boxes) > 0,
+            "detected_shapes": list(dict.fromkeys(shapes)),
+            "bounding_boxes": boxes,
+            "detection_confidence": top_confidence,
+            "motif_description": self._describe(shapes),
+            "method": "yolov8_cls",
+        }
+
+    @staticmethod
+    def _canonicalize(label: str) -> str:
+        """Mapea el nombre del modelo al vocabulario controlado de TaxonomyCategory."""
+        return _TAXONOMY_MAP.get(label.strip().lower(), label)
 
     def _detect_yolo(self, img: np.ndarray, image_path: str) -> dict:
         results = self._yolo(image_path, conf=settings.confidence_threshold, verbose=False)
