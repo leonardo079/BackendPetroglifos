@@ -10,6 +10,7 @@ from PIL import Image
 from agents.base_agent import BaseAgent, AgentInput, AgentOutput
 from adapters.outbound.vector_store.pgvector_adapter import ImageVectorAdapter
 from graphs.social_graph import PetroglyphSocialGraph
+from core.domain.site_normalization import canonicalize_municipality, canonicalize_site_name
 
 log = structlog.get_logger(__name__)
 
@@ -69,8 +70,8 @@ class ComparatorAgent(BaseAgent):
         t0 = time.monotonic()
         image_path: str = input.payload.get("preprocessed_image_path", "") or \
                           input.payload.get("image_path", "")
-        current_site: str = input.payload.get("site", "")
-        current_municipality: str = input.payload.get("municipality", "")
+        current_site: str = canonicalize_site_name(input.payload.get("site", ""))
+        current_municipality: str = canonicalize_municipality(input.payload.get("municipality", ""))
         site_id: str = input.payload.get("site_id", "")
 
         matches: list[dict] = []
@@ -85,8 +86,8 @@ class ComparatorAgent(BaseAgent):
             )
             matches = [
                 {
-                    "site_name": m["site_name"],
-                    "municipality": m["municipality"],
+                    "site_name": canonicalize_site_name(m["site_name"]),
+                    "municipality": canonicalize_municipality(m["municipality"]),
                     "reference_name": m["reference_name"],
                     "taxonomy": m["taxonomy"],
                     "similarity_score": round(m["similarity_score"], 4),
@@ -100,7 +101,7 @@ class ComparatorAgent(BaseAgent):
             node_a = current_site
             if self._social_graph and node_a and matches:
                 for match in matches:
-                    node_b = match.get("site_name", "")
+                    node_b = canonicalize_site_name(match.get("site_name", ""))
                     if node_b and match["similarity_score"] >= 0.70:
                         self._social_graph.add_or_update_edge(
                             site_a=node_a,
@@ -154,6 +155,8 @@ class ComparatorAgent(BaseAgent):
         from sqlalchemy.exc import IntegrityError
         from infrastructure.database.models.models import RupestranSiteModel
 
+        name = canonicalize_site_name(name)
+        municipality = canonicalize_municipality(municipality)
         result = await self._session.execute(
             select(RupestranSiteModel).where(RupestranSiteModel.name == name).limit(1)
         )
@@ -197,6 +200,8 @@ class ComparatorAgent(BaseAgent):
         from infrastructure.database.models.models import RupestranSiteModel, SiteGraphEdge
 
         try:
+            current_site_name = canonicalize_site_name(current_site_name)
+            current_municipality = canonicalize_municipality(current_municipality)
             # Resolver UUID del sitio que se está analizando
             if current_site_id and current_site_id.count("-") == 4:
                 site_a_uuid = current_site_id
@@ -218,7 +223,8 @@ class ComparatorAgent(BaseAgent):
                     continue
 
                 site_b_uuid = await self._get_or_create_site(
-                    match_name, municipality=match.get("municipality", "")
+                    canonicalize_site_name(match_name),
+                    municipality=match.get("municipality", ""),
                 )
                 if not site_b_uuid or site_a_uuid == site_b_uuid:
                     continue

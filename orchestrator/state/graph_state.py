@@ -14,11 +14,13 @@ class PetroglyphState(TypedDict, total=False):
     bounding_box: dict
     detection_confidence: float
     motifs_visible: bool
+    segmentation_validation: dict
     _deterioration_detected: bool   # usado por el router para decidir A3 vs A5
     # A3
     similarity_matches: list[dict]
     # A5
     reconstructed_image_path: str
+    reconstruction_diagnostics: dict
     # A4
     a4_taxonomy_result: dict
     a4_requires_validation: bool
@@ -26,5 +28,4 @@ class PetroglyphState(TypedDict, total=False):
     a4_rag_feedback: dict
     # A6
     icanh_pdf_url: str
-    icanh_pdf_cloudinary_url: str
     icanh_json: dict

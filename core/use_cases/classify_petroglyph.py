@@ -9,6 +9,7 @@ import uuid
 import structlog
 from core.ports.inbound.classify_petroglyph_port import ClassifyPetroglyphPort
 from core.domain.value_objects.classification_result import ClassificationResult
+from core.domain.site_normalization import normalize_site_metadata
 
 log = structlog.get_logger(__name__)
 
@@ -61,10 +62,15 @@ class ClassifyPetroglyphUseCase(ClassifyPetroglyphPort):
 
         task_id = input_data.get("petroglyph_id") or str(uuid.uuid4())
 
+        site, municipality, department = normalize_site_metadata(
+            input_data.get("site", "Sin nombre"),
+            input_data.get("municipality", ""),
+            input_data.get("department", ""),
+        )
         site_metadata = {
-            "site": input_data.get("site", "Sin nombre"),
-            "municipality": input_data.get("municipality", ""),
-            "department": input_data.get("department", ""),
+            "site": site,
+            "municipality": municipality,
+            "department": department,
             "gps_coordinates": input_data.get("gps_coordinates", {}),
             "conservation_status": input_data.get("conservation_status", "Regular"),
             "researcher_notes": input_data.get("researcher_notes", ""),

@@ -30,9 +30,11 @@ from adapters.inbound.telegram_bot.messages import (
     NO_SITES,
     GRAPH_SUMMARY,
     GRAPH_EMPTY,
+    GRAPH_IMAGE_CAPTION,
     GRAPH_HTML_CAPTION,
     ERROR_API,
     ERROR_TASK_NOT_FOUND,
+    ERROR_GRAPH_IMAGE,
     ERROR_GRAPH_EXPORT,
 )
 
@@ -141,7 +143,7 @@ async def sitios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def grafo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Muestra estadísticas del grafo social y envía la visualización HTML interactiva.
+    Muestra estadísticas del grafo social y envía la imagen estática y el HTML interactivo.
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -170,7 +172,21 @@ async def grafo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-    # Intentar descargar y enviar el grafo interactivo como archivo HTML
+    # Intentar descargar y enviar primero la imagen estática del grafo
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            image_resp = await client.get(f"{_API}/graph/export/image")
+            image_resp.raise_for_status()
+            image_buf = BytesIO(image_resp.content)
+            image_buf.name = "red_rupestre.png"
+            await update.message.reply_photo(
+                photo=image_buf,
+                caption=GRAPH_IMAGE_CAPTION,
+            )
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        await update.message.reply_text(ERROR_GRAPH_IMAGE, parse_mode=ParseMode.HTML)
+
+    # Luego enviar el HTML interactivo
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             html_resp = await client.get(f"{_API}/graph/export")

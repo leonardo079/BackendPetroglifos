@@ -1,10 +1,10 @@
-"""
-Handler de conversación para clasificación de petroglifos vía fotografía.
+﻿"""
+Handler de conversaciÃ³n para clasificaciÃ³n de petroglifos vÃ­a fotografÃ­a.
 
-Flujo de la conversación:
-    [foto] → SITE_NAME → MUNICIPALITY → CONSERVATION → [lanza pipeline async]
+Flujo de la conversaciÃ³n:
+    [foto] â†’ SITE_NAME â†’ MUNICIPALITY â†’ CONSERVATION â†’ [lanza pipeline async]
 
-Una vez recopilados los metadatos, la imagen se encola a través de la API REST
+Una vez recopilados los metadatos, la imagen se encola a travÃ©s de la API REST
 (POST /classify/upload) y el bot hace polling del resultado (GET /tasks/{id})
 en segundo plano, editando el mensaje de estado cuando termina.
 """
@@ -21,6 +21,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from config.settings import settings
+from core.domain.site_normalization import canonicalize_municipality, canonicalize_site_name
 from adapters.inbound.telegram_bot.messages import (
     ASK_SITE_NAME,
     ASK_MUNICIPALITY,
@@ -44,7 +45,7 @@ log = structlog.get_logger(__name__)
 UPLOAD_DIR = Path("storage/uploads/telegram")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Estados de la conversación (exportados para el ConversationHandler en bot.py)
+# Estados de la conversaciÃ³n (exportados para el ConversationHandler en bot.py)
 SITE_NAME, MUNICIPALITY, CONSERVATION = range(3)
 
 _API = settings.api_base_url.rstrip("/")
@@ -53,23 +54,23 @@ _CONSERVATION_MAP: dict[str, str] = {
     "bueno": "Bueno",
     "regular": "Regular",
     "malo": "Malo",
-    "crítico": "Crítico",
-    "critico": "Crítico",
+    "crÃ­tico": "CrÃ­tico",
+    "critico": "CrÃ­tico",
 }
 
-# Configuración del polling
+# ConfiguraciÃ³n del polling
 _POLL_INTERVAL_SECONDS = 10
 _MAX_POLL_SECONDS = 300  # 5 minutos
 
 
-# ── Pasos de la conversación ──────────────────────────────────────────────────
+# â”€â”€ Pasos de la conversaciÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Punto de entrada: el usuario envía una fotografía.
+    Punto de entrada: el usuario envÃ­a una fotografÃ­a.
     Guarda el file_id en user_data y pide el nombre del sitio.
     """
-    photo = update.message.photo[-1]  # Tomar la versión de mayor resolución
+    photo = update.message.photo[-1]  # Tomar la versiÃ³n de mayor resoluciÃ³n
     context.user_data.clear()
     context.user_data["photo_file_id"] = photo.file_id
     context.user_data["task_id"] = str(uuid.uuid4())
@@ -85,28 +86,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def handle_site_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Guarda el nombre del sitio y pide el municipio."""
-    context.user_data["site"] = update.message.text.strip()
+    context.user_data["site"] = canonicalize_site_name(update.message.text.strip())
     await update.message.reply_text(ASK_MUNICIPALITY, parse_mode=ParseMode.HTML)
     return MUNICIPALITY
 
 
 async def handle_municipality(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Guarda el municipio y pide el estado de conservación."""
-    context.user_data["municipality"] = update.message.text.strip()
+    """Guarda el municipio y pide el estado de conservaciÃ³n."""
+    context.user_data["municipality"] = canonicalize_municipality(update.message.text.strip())
     await update.message.reply_text(ASK_CONSERVATION, parse_mode=ParseMode.HTML)
     return CONSERVATION
 
 
 async def handle_conservation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Valida el estado de conservación, descarga la foto de Telegram,
-    envía mensaje de "procesando" y lanza el pipeline en segundo plano.
+    Valida el estado de conservaciÃ³n, descarga la foto de Telegram,
+    envÃ­a mensaje de "procesando" y lanza el pipeline en segundo plano.
     """
     raw = update.message.text.strip().lower()
     conservation = _CONSERVATION_MAP.get(raw)
     if not conservation:
         await update.message.reply_text(INVALID_CONSERVATION, parse_mode=ParseMode.HTML)
-        return CONSERVATION  # Repetir este estado hasta que sea válido
+        return CONSERVATION  # Repetir este estado hasta que sea vÃ¡lido
 
     task_id: str = context.user_data["task_id"]
     file_id: str = context.user_data["photo_file_id"]
@@ -144,13 +145,13 @@ async def handle_conservation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancela la conversación en curso."""
+    """Cancela la conversaciÃ³n en curso."""
     context.user_data.clear()
     await update.message.reply_text(CANCELLED, parse_mode=ParseMode.HTML)
     return ConversationHandler.END
 
 
-# ── Pipeline asíncrono en segundo plano ──────────────────────────────────────
+# â”€â”€ Pipeline asÃ­ncrono en segundo plano â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _enqueue_and_poll(
     app,
@@ -163,12 +164,12 @@ async def _enqueue_and_poll(
     conservation_status: str,
 ) -> None:
     """
-    Encola la clasificación vía POST /classify/upload y hace polling de
+    Encola la clasificaciÃ³n vÃ­a POST /classify/upload y hace polling de
     GET /tasks/{task_id} hasta obtener el resultado o agotar el tiempo.
 
     Al terminar, edita el mensaje de estado con el resultado y adjunta el PDF.
     """
-    # ── 1. Encolar tarea ──────────────────────────────────────────────────────
+    # â”€â”€ 1. Encolar tarea â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     api_task_id = task_id
     try:
         img_path = Path(image_path)
@@ -206,7 +207,7 @@ async def _enqueue_and_poll(
 
     log.info("bot_task_enqueued", task_id=api_task_id, site=site)
 
-    # ── 2. Polling del resultado ──────────────────────────────────────────────
+    # â”€â”€ 2. Polling del resultado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     elapsed = 0
     while elapsed < _MAX_POLL_SECONDS:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -218,7 +219,7 @@ async def _enqueue_and_poll(
                 poll_resp.raise_for_status()
                 data = poll_resp.json()
         except (httpx.RequestError, httpx.HTTPStatusError):
-            # Error transitorio — continuar intentando
+            # Error transitorio â€” continuar intentando
             continue
 
         celery_state = data.get("celery_state", "")
@@ -241,7 +242,7 @@ async def _enqueue_and_poll(
             )
             return
 
-    # ── Timeout ───────────────────────────────────────────────────────────────
+    # â”€â”€ Timeout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     log.warning("bot_task_timeout", task_id=api_task_id, elapsed_s=elapsed)
     await app.bot.edit_message_text(
         chat_id=chat_id,
@@ -260,41 +261,40 @@ async def _send_result(
     site: str,
     municipality: str,
 ) -> None:
-    """Formatea el resultado de la clasificación y lo envía al usuario."""
+    """Formatea el resultado de la clasificaciÃ³n y lo envÃ­a al usuario."""
     classification = result.get("classification", {})
     taxonomy = classification.get("taxonomy", "Indeterminado")
     confidence_raw = float(classification.get("confidence", 0.0))
     confidence = round(confidence_raw * 100, 1)
-    justification = classification.get("justification", "Sin información.")
+    justification = classification.get("justification", "Sin informaciÃ³n.")
     requires_validation = classification.get("requires_validation", True)
 
-    # Truncar justificación muy larga para respetar el límite de Telegram (4096 chars)
+    # Truncar justificaciÃ³n muy larga para respetar el lÃ­mite de Telegram (4096 chars)
     if len(justification) > 500:
-        justification = justification[:497] + "…"
+        justification = justification[:497] + "â€¦"
 
     validation_flag = VALIDATION_WARNING if requires_validation else ""
     text = RESULT_OK.format(
         site=site or "Sin nombre",
-        municipality=municipality or "—",
+        municipality=municipality or "â€”",
         taxonomy=taxonomy,
         confidence=confidence,
         validation_flag=validation_flag,
         justification=justification,
     )
 
-    # Añadir similitudes iconográficas (máximo 3 para no exceder el límite)
+    # AÃ±adir similitudes iconogrÃ¡ficas (mÃ¡ximo 3 para no exceder el lÃ­mite)
     similarity_matches = classification.get("similarity_matches", [])
     if similarity_matches:
         match_lines = "\n".join(
-            f"  • <b>{m['site_name']}</b> ({m.get('municipality', '—')}) "
-            f"— {round(m['similarity_score'] * 100, 1)}% [{m.get('taxonomy', '?')}]"
+            f"  â€¢ <b>{m['site_name']}</b> ({m.get('municipality', 'â€”')}) "
+            f"â€” {round(m['similarity_score'] * 100, 1)}% [{m.get('taxonomy', '?')}]"
             for m in similarity_matches[:3]
         )
         text += SIMILARITY_BLOCK.format(matches=match_lines)
 
     pdf_local_path = result.get("icanh_pdf_url", "")
-    pdf_cloudinary_url = result.get("icanh_pdf_cloudinary_url", "")
-    if pdf_local_path or pdf_cloudinary_url:
+    if pdf_local_path:
         text += RESULT_PDF_NOTE
 
     # Editar el mensaje de "procesando" con el resultado final
@@ -305,20 +305,7 @@ async def _send_result(
         parse_mode=ParseMode.HTML,
     )
 
-    # Adjuntar PDF si existe en el sistema de archivos
-    if pdf_cloudinary_url:
-        try:
-            await app.bot.send_document(
-                chat_id=chat_id,
-                document=pdf_cloudinary_url,
-                filename=f"ficha_icanh_{task_id}.pdf",
-                caption="📄 Ficha ICANH generada automáticamente.",
-            )
-            log.info("bot_pdf_sent_cloudinary", task_id=task_id)
-            return
-        except Exception as exc:
-            log.warning("bot_pdf_cloudinary_send_error", task_id=task_id, error=str(exc))
-
+    # Adjuntar solo el PDF local generado por el documentador
     if pdf_local_path:
         pdf_path = Path(pdf_local_path)
         if pdf_path.exists():
@@ -328,8 +315,8 @@ async def _send_result(
                         chat_id=chat_id,
                         document=f,
                         filename=f"ficha_icanh_{task_id}.pdf",
-                        caption="📄 Ficha ICANH generada automáticamente.",
-                )
+                        caption="Ficha ICANH generada automaticamente.",
+                    )
                 log.info("bot_pdf_sent", task_id=task_id)
             except Exception as exc:
                 log.warning("bot_pdf_send_error", task_id=task_id, error=str(exc))

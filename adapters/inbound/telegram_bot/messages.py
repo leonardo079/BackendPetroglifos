@@ -104,6 +104,7 @@ GRAPH_EMPTY = (
     "Se construye automáticamente con cada clasificación procesada."
 )
 
+GRAPH_IMAGE_CAPTION = "🖼️ Imagen estática del mapa de grafo social."
 GRAPH_HTML_CAPTION = "📊 Visualización interactiva del grafo iconográfico (PyVis)."
 
 CANCELLED = "❌ Operación cancelada."
@@ -129,3 +130,4 @@ ERROR_TIMEOUT = (
 )
 ERROR_TASK_NOT_FOUND = "❌ No se encontró la tarea <code>{task_id}</code>. Verifica el ID."
 ERROR_GRAPH_EXPORT = "⚠️ No se pudo generar la visualización interactiva del grafo."
+ERROR_GRAPH_IMAGE = "⚠️ No se pudo generar la imagen estática del grafo."

@@ -4,10 +4,10 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from textwrap import wrap
 import structlog
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from agents.base_agent import BaseAgent, AgentInput, AgentOutput
-from infrastructure.storage.cloudinary_service import upload_pdf
 
 log = structlog.get_logger(__name__)
 
@@ -39,6 +39,8 @@ class DocumentorAgent(BaseAgent):
             "justification": p.get("justification", ""),
             "petroglyph_description": p.get("petroglyph_description", {}),
             "rag_feedback": p.get("rag_feedback", {}),
+            "segmentation_validation": p.get("segmentation_validation", {}),
+            "reconstruction_diagnostics": p.get("reconstruction_diagnostics", {}),
             "detected_shapes": p.get("detected_shapes", []),
             "similarity_matches": p.get("similarity_matches", []),
             "conservation_status": p.get("conservation_status", "Regular"),
@@ -59,20 +61,17 @@ class DocumentorAgent(BaseAgent):
         # 2. Renderizar HTML y generar PDF
         try:
             html_content = self._render_html(record)
-            self._generate_pdf(html_content, pdf_path)
+            self._generate_pdf(html_content, pdf_path, record)
             pdf_url = str(pdf_path)
-            pdf_cloudinary_url = upload_pdf(pdf_path, public_id=f"{task_id}_ficha")
         except Exception as e:
             log.warning("pdf_generation_failed", error=str(e), task_id=task_id)
             pdf_url = ""
-            pdf_cloudinary_url = ""
 
         elapsed = round((time.monotonic() - t0) * 1000)
         log.info("a6_documentor_done",
                  task_id=task_id,
                  json_path=str(json_path),
                  pdf_path=pdf_url,
-                 pdf_cloudinary_url=pdf_cloudinary_url or None,
                  latency_ms=elapsed)
 
         return AgentOutput(
@@ -80,7 +79,6 @@ class DocumentorAgent(BaseAgent):
             agent_name=self.name,
             result={
                 "icanh_pdf_url": pdf_url,
-                "icanh_pdf_cloudinary_url": pdf_cloudinary_url,
                 "icanh_json_path": str(json_path),
                 "icanh_record": record,
             },
@@ -96,14 +94,129 @@ class DocumentorAgent(BaseAgent):
             # Fallback: HTML básico inline
             return self._fallback_html(record)
 
-    def _generate_pdf(self, html: str, output_path: Path) -> None:
-        from weasyprint import HTML
-        HTML(string=html).write_pdf(str(output_path))
+    def _generate_pdf(self, html: str, output_path: Path, record: dict) -> None:
+        try:
+            from weasyprint import HTML
+
+            HTML(string=html).write_pdf(str(output_path))
+            return
+        except Exception as e:
+            log.warning("weasyprint_fallback_pdf", error=str(e), task_id=record.get("petroglyph_id"))
+
+        self._generate_pdf_fallback(record, output_path)
+
+    def _generate_pdf_fallback(self, record: dict, output_path: Path) -> None:
+        """Genera un PDF simple sin dependencias nativas externas."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_pdf import PdfPages
+
+        def _safe(value) -> str:
+            return "" if value is None else str(value)
+
+        def _add_wrapped(fig, y: float, label: str, value: str, *, value_width: int = 86) -> float:
+            fig.text(0.08, y, label, fontsize=11, fontweight="bold", color="#1f2937")
+            y -= 0.022
+            lines = wrap(value, width=value_width) or [""]
+            for line in lines:
+                fig.text(0.10, y, line, fontsize=10, color="#334155")
+                y -= 0.018
+            return y - 0.008
+
+        segmentation_validation = record.get("segmentation_validation", {}) or {}
+        reconstruction_diagnostics = record.get("reconstruction_diagnostics", {}) or {}
+        petroglyph_description = record.get("petroglyph_description", {}) or {}
+        rag_feedback = record.get("rag_feedback", {}) or {}
+
+        with PdfPages(str(output_path)) as pdf:
+            fig = plt.figure(figsize=(8.27, 11.69), facecolor="white")
+            ax = fig.add_axes([0, 0, 1, 1])
+            ax.axis("off")
+
+            y = 0.96
+            fig.text(0.08, y, "Ficha de Registro ICANH - Petroglifo", fontsize=18, fontweight="bold")
+            y -= 0.04
+            fig.text(0.08, y, f"ID: {_safe(record.get('petroglyph_id'))}", fontsize=10, color="#475569")
+            y -= 0.03
+            fig.text(
+                0.08,
+                y,
+                f"Sitio: {_safe(record.get('site'))}, {_safe(record.get('municipality'))}, {_safe(record.get('department'))}",
+                fontsize=10,
+                color="#475569",
+            )
+            y -= 0.05
+
+            y = _add_wrapped(fig, y, "Clasificacion:", _safe(record.get("taxonomy", "Indeterminado")))
+            y = _add_wrapped(fig, y, "Confianza:", f"{round(float(record.get('confidence', 0.0)) * 100, 1)}%")
+            y = _add_wrapped(fig, y, "Estado de conservacion:", _safe(record.get("conservation_status", "Regular")))
+            y = _add_wrapped(fig, y, "Justificacion:", _safe(record.get("justification", "No disponible.")))
+            y = _add_wrapped(
+                fig,
+                y,
+                "Descripcion tecnica:",
+                _safe(petroglyph_description.get("detailed_description", "No disponible.")),
+            )
+            y = _add_wrapped(fig, y, "Sitio probable:", _safe(petroglyph_description.get("probable_site", "No definido")))
+            y = _add_wrapped(
+                fig,
+                y,
+                "Probabilidad de sitio:",
+                f"{round(float(petroglyph_description.get('site_probability', 0.0)) * 100, 1)}%",
+            )
+            y = _add_wrapped(
+                fig,
+                y,
+                "RAG promedio:",
+                f"{round(float(rag_feedback.get('avg_similarity', 0.0)) * 100, 1)}%",
+            )
+            y = _add_wrapped(
+                fig,
+                y,
+                "Formas detectadas:",
+                ", ".join(record.get("detected_shapes", [])) or "No se detectaron formas.",
+            )
+            y = _add_wrapped(fig, y, "Coincidencias iconograficas:", str(len(record.get("similarity_matches", []))))
+            y = _add_wrapped(
+                fig,
+                y,
+                "Segmentacion:",
+                f"score={_safe(segmentation_validation.get('validation_score', 'N/A'))}, "
+                f"status={_safe(segmentation_validation.get('segmentation_status', 'N/A'))}, "
+                f"area={_safe(segmentation_validation.get('area_percent', 'N/A'))}, "
+                f"warnings={', '.join(segmentation_validation.get('validation_warnings', [])) or 'N/A'}",
+            )
+            y = _add_wrapped(
+                fig,
+                y,
+                "Reconstruccion:",
+                f"pipeline={_safe(reconstruction_diagnostics.get('pipeline', 'N/A'))}, "
+                f"endpoint={_safe(reconstruction_diagnostics.get('endpoint', 'N/A'))}, "
+                f"damage_pixels={_safe(reconstruction_diagnostics.get('reconstruction_response', {}).get('damage_pixel_count', 'N/A'))}, "
+                f"guide_pixels={_safe(reconstruction_diagnostics.get('reconstruction_response', {}).get('guide_pixel_count', 'N/A'))}",
+            )
+
+            if record.get("requires_expert_validation", True):
+                fig.text(
+                    0.08,
+                    max(0.04, y),
+                    "Esta ficha requiere validacion por un arqueologo experto.",
+                    fontsize=10,
+                    color="#92400e",
+                    bbox=dict(boxstyle="round,pad=0.4", facecolor="#fffbeb", edgecolor="#f59e0b"),
+                )
+
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
 
     def _fallback_html(self, r: dict) -> str:
         confidence_pct = round(r["confidence"] * 100, 1)
         desc = r.get("petroglyph_description", {})
         rag_feedback = r.get("rag_feedback", {})
+        segmentation_validation = r.get("segmentation_validation", {})
+        reconstruction_diagnostics = r.get("reconstruction_diagnostics", {})
         rag_avg = round(float(rag_feedback.get("avg_similarity", 0.0)) * 100, 1)
         shapes_html = "".join(f"<li>{s}</li>" for s in r["detected_shapes"])
         matches_html = "".join(
@@ -171,6 +284,22 @@ class DocumentorAgent(BaseAgent):
     <tr><td>Etiqueta</td><td>{rag_feedback.get("consistency_label", "N/A")}</td></tr>
 </table>
 <ul>{rag_top_html or "<li>Sin evidencia de alineación.</li>"}</ul>
+
+<h2>Diagnostico de segmentacion</h2>
+<table>
+    <tr><td>Validation score</td><td>{segmentation_validation.get("validation_score", "N/A")}</td></tr>
+    <tr><td>Segmentation status</td><td>{segmentation_validation.get("segmentation_status", "N/A")}</td></tr>
+    <tr><td>Area percent</td><td>{segmentation_validation.get("area_percent", "N/A")}</td></tr>
+    <tr><td>Warnings</td><td>{", ".join(segmentation_validation.get("validation_warnings", [])) or "N/A"}</td></tr>
+</table>
+
+<h2>Diagnostico de reconstruccion</h2>
+<table>
+    <tr><td>Pipeline</td><td>{reconstruction_diagnostics.get("pipeline", "N/A")}</td></tr>
+    <tr><td>Endpoint</td><td>{reconstruction_diagnostics.get("endpoint", "N/A")}</td></tr>
+    <tr><td>Damage pixels</td><td>{reconstruction_diagnostics.get("reconstruction_response", {}).get("damage_pixel_count", "N/A")}</td></tr>
+    <tr><td>Guide pixels</td><td>{reconstruction_diagnostics.get("reconstruction_response", {}).get("guide_pixel_count", "N/A")}</td></tr>
+</table>
 
 <h2>Formas detectadas</h2>
 <ul>{shapes_html or "<li>No se detectaron formas.</li>"}</ul>

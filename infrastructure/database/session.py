@@ -1,6 +1,7 @@
 """Motor y sesión async de SQLAlchemy."""
 from __future__ import annotations
 from collections.abc import AsyncGenerator
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from config.settings import settings
@@ -10,9 +11,21 @@ class Base(DeclarativeBase):
     pass
 
 
+def _normalize_database_url(raw_url: str) -> str:
+    """
+    Accept a plain PostgreSQL URL in .env and upgrade it to the async driver
+    used by this app.
+    """
+    url = make_url(raw_url)
+    if url.drivername == "postgresql":
+        url = url.set(drivername="postgresql+asyncpg")
+    return url.render_as_string(hide_password=False)
+
+
 engine = create_async_engine(
-    settings.database_url,
+    _normalize_database_url(settings.database_url),
     echo=settings.env == "development",
+    connect_args={"statement_cache_size": 0},
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,

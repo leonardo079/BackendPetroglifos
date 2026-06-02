@@ -59,6 +59,12 @@ sys.path.insert(0, str(_ROOT))
 import structlog
 from sqlalchemy import select, text
 
+from core.domain.site_normalization import (
+    canonicalize_municipality,
+    canonicalize_site_name,
+    normalize_site_metadata,
+)
+
 log = structlog.get_logger("seed_image_embeddings")
 
 _SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
@@ -99,6 +105,7 @@ def _collect_from_folder(folder: Path) -> list[dict]:
             if not site_dir.is_dir():
                 continue
             site_name = site_dir.name.replace("_", " ")
+            site_name, municipality, _department = normalize_site_metadata(site_name)
 
             for img_file in sorted(site_dir.iterdir()):
                 if img_file.suffix.lower() not in _SUPPORTED_EXTENSIONS:
@@ -106,7 +113,7 @@ def _collect_from_folder(folder: Path) -> list[dict]:
                 records.append({
                     "image_path": str(img_file),
                     "site_name": site_name,
-                    "municipality": "",
+                    "municipality": municipality,
                     "taxonomy": taxonomy,
                     "reference_name": img_file.stem.replace("_", " "),
                 })
@@ -131,8 +138,8 @@ def _collect_from_csv(csv_path: Path) -> list[dict]:
                 continue
             records.append({
                 "image_path": path,
-                "site_name": row.get("site_name", "").strip(),
-                "municipality": row.get("municipality", "").strip(),
+                "site_name": canonicalize_site_name(row.get("site_name", "").strip()),
+                "municipality": canonicalize_municipality(row.get("municipality", "").strip()),
                 "taxonomy": _normalize_taxonomy(row.get("taxonomy", "Indeterminado")),
                 "reference_name": row.get("reference_name", "").strip(),
             })
@@ -184,8 +191,8 @@ async def _insert_batch(session, batch: list[dict]) -> int:
     count = 0
     for rec in batch:
         session.add(ImageEmbedding(
-            site_name=rec["site_name"],
-            municipality=rec["municipality"],
+            site_name=canonicalize_site_name(rec["site_name"]),
+            municipality=canonicalize_municipality(rec["municipality"]),
             reference_name=rec["reference_name"],
             taxonomy=rec["taxonomy"],
             image_path=rec["image_path"],

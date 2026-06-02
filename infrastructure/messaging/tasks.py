@@ -8,10 +8,55 @@ Uso desde el API:
 """
 from __future__ import annotations
 import asyncio
+import importlib.util
+import os
+import sys
+from pathlib import Path
+import types
 import structlog
 from infrastructure.messaging.celery_app import celery_app
 
 log = structlog.get_logger(__name__)
+
+# Refuerzo adicional: evita que imports absolutos fallen si el worker cambió de cwd.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _load_create_orchestrator():
+    """
+    Carga create_orchestrator sin depender de que el worker resuelva imports
+    de paquete correctamente.
+    """
+    try:
+        from orchestrator.PetroglyphOrchestrator import create_orchestrator
+
+        return create_orchestrator
+    except ModuleNotFoundError:
+        module_path = PROJECT_ROOT / "orchestrator" / "PetroglyphOrchestrator.py"
+        os.chdir(PROJECT_ROOT)
+
+        package_name = "orchestrator"
+        package_path = PROJECT_ROOT / package_name
+        package = sys.modules.get(package_name)
+        if package is None:
+            package = types.ModuleType(package_name)
+            package.__path__ = [str(package_path)]  # type: ignore[attr-defined]
+            sys.modules[package_name] = package
+        else:
+            package.__path__ = [str(package_path)]  # type: ignore[attr-defined]
+
+        spec = importlib.util.spec_from_file_location(
+            "orchestrator.PetroglyphOrchestrator",
+            module_path,
+        )
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["orchestrator.PetroglyphOrchestrator"] = module
+        spec.loader.exec_module(module)
+        return module.create_orchestrator
 
 
 def _run_async(coro):
@@ -64,9 +109,9 @@ def classify_petroglyph_task(
 async def _run_pipeline(task_id: str, image_path: str, site_metadata: dict) -> dict:
     """Importa y ejecuta el orquestador dentro de un contexto async."""
     from infrastructure.database.session import AsyncSessionLocal
-    from orchestrator.PetroglyphOrchestrator import create_orchestrator
 
     async with AsyncSessionLocal() as session:
+        create_orchestrator = _load_create_orchestrator()
         orchestrator = await create_orchestrator(session)
         return await orchestrator.run(task_id, image_path, site_metadata)
 

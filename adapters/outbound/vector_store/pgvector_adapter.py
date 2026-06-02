@@ -4,6 +4,11 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.ports.outbound.vector_store_port import VectorStorePort
+from core.domain.site_normalization import (
+    canonicalize_municipality,
+    canonicalize_site_name,
+    normalize_site_metadata,
+)
 from infrastructure.database.models.models import ArchaeologicalChunk, ImageEmbedding
 from config.settings import settings
 
@@ -32,10 +37,10 @@ class PgvectorAdapter(VectorStorePort):
                 source_document,
                 chunk_text,
                 metadata,
-                1 - (embedding <=> :query_vec::vector) AS similarity
+                1 - (embedding <=> CAST(:query_vec AS vector)) AS similarity
             FROM archaeological_chunks
-            WHERE 1 - (embedding <=> :query_vec::vector) >= :min_sim
-            ORDER BY embedding <=> :query_vec::vector
+            WHERE 1 - (embedding <=> CAST(:query_vec AS vector)) >= :min_sim
+            ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :k
         """)
         result = await self._session.execute(
@@ -113,10 +118,10 @@ class ImageVectorAdapter:
                 reference_name,
                 taxonomy,
                 image_path,
-                1 - (embedding <=> :query_vec::vector) AS similarity
+                1 - (embedding <=> CAST(:query_vec AS vector)) AS similarity
             FROM image_embeddings
-            WHERE 1 - (embedding <=> :query_vec::vector) >= :min_sim
-            ORDER BY embedding <=> :query_vec::vector
+            WHERE 1 - (embedding <=> CAST(:query_vec AS vector)) >= :min_sim
+            ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :k
         """)
         result = await self._session.execute(
@@ -128,8 +133,8 @@ class ImageVectorAdapter:
             {
                 "id": str(row.id),
                 "petroglyph_id": str(row.petroglyph_id) if row.petroglyph_id else None,
-                "site_name": row.site_name,
-                "municipality": row.municipality,
+                "site_name": canonicalize_site_name(row.site_name),
+                "municipality": canonicalize_municipality(row.municipality),
                 "reference_name": row.reference_name,
                 "taxonomy": row.taxonomy,
                 "image_path": row.image_path,
@@ -140,10 +145,15 @@ class ImageVectorAdapter:
 
     async def upsert(self, records: list[dict]) -> None:
         for rec in records:
+            site_name, municipality, _department = normalize_site_metadata(
+                rec.get("site_name", ""),
+                rec.get("municipality", ""),
+                rec.get("department", ""),
+            )
             img_emb = ImageEmbedding(
                 petroglyph_id=rec.get("petroglyph_id"),
-                site_name=rec.get("site_name", ""),
-                municipality=rec.get("municipality", ""),
+                site_name=site_name,
+                municipality=municipality,
                 reference_name=rec.get("reference_name", ""),
                 taxonomy=rec.get("taxonomy", "Indeterminado"),
                 image_path=rec.get("image_path", ""),

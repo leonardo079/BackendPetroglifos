@@ -130,6 +130,40 @@
   </div>
 
   <div class="card">
+    <h2>Diagnostico de segmentacion</h2>
+    <div class="grid">
+      <div class="k">Validation score</div>
+      <div>{{ segmentation_validation.validation_score if segmentation_validation else 'N/A' }}</div>
+      <div class="k">Segmentation status</div>
+      <div>{{ segmentation_validation.segmentation_status if segmentation_validation else 'N/A' }}</div>
+      <div class="k">Area percent</div>
+      <div>{{ segmentation_validation.area_percent if segmentation_validation else 'N/A' }}</div>
+      <div class="k">Warnings</div>
+      <div>
+        {% if segmentation_validation and segmentation_validation.validation_warnings %}
+          {{ segmentation_validation.validation_warnings | join(', ') }}
+        {% else %}
+          N/A
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Diagnostico de reconstruccion</h2>
+    <div class="grid">
+      <div class="k">Pipeline</div>
+      <div>{{ reconstruction_diagnostics.pipeline if reconstruction_diagnostics else 'N/A' }}</div>
+      <div class="k">Endpoint</div>
+      <div>{{ reconstruction_diagnostics.endpoint if reconstruction_diagnostics else 'N/A' }}</div>
+      <div class="k">Damage pixels</div>
+      <div>{{ reconstruction_diagnostics.reconstruction_response.damage_pixel_count if reconstruction_diagnostics and reconstruction_diagnostics.reconstruction_response and reconstruction_diagnostics.reconstruction_response.damage_pixel_count is defined else 'N/A' }}</div>
+      <div class="k">Guide pixels</div>
+      <div>{{ reconstruction_diagnostics.reconstruction_response.guide_pixel_count if reconstruction_diagnostics and reconstruction_diagnostics.reconstruction_response and reconstruction_diagnostics.reconstruction_response.guide_pixel_count is defined else 'N/A' }}</div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Formas detectadas</h2>
     <ul>
       {% if detected_shapes %}

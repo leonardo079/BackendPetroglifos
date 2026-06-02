@@ -1,18 +1,21 @@
 """A4 — Analista Cultural (RAG + Gemini): núcleo del módulo LLM."""
 from __future__ import annotations
+
 import json
 import time
-import structlog
-from sqlalchemy import text
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
-from agents.base_agent import BaseAgent, AgentInput, AgentOutput
-from adapters.outbound.llm.gemini_adapter import GeminiAdapter
+
+import structlog
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from sqlalchemy import text
+
+from agents.base_agent import AgentInput, AgentOutput, BaseAgent
 from adapters.outbound.embeddings.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from rag.retrieval.retriever import RAGRetriever
+from adapters.outbound.llm.gemini_adapter import GeminiAdapter
+from config.settings import settings
 from core.domain.enums.taxonomy import TaxonomyCategory
 from core.domain.value_objects.classification_result import ClassificationResult
-from config.settings import settings
+from rag.retrieval.retriever import RAGRetriever
 
 log = structlog.get_logger(__name__)
 
@@ -52,14 +55,11 @@ class CulturalAnalystAgent(BaseAgent):
         site_metadata: dict = payload.get("site_metadata", {})
 
         try:
-            # 1. Recuperar contexto del corpus arqueológico.
-            # Si A3 devuelvió matches con taxonomía dominante, usarla como hint
-            # para que el retriever enriquezca la consulta y mejore el recall.
             taxonomy_hint = ""
             if similarity_matches:
                 tax_counts: dict[str, int] = {}
                 for m in similarity_matches:
-                    t = m.get("taxonomy", "")
+                    t = str(m.get("taxonomy", "")).strip()
                     if t:
                         tax_counts[t] = tax_counts.get(t, 0) + 1
                 if tax_counts:
@@ -72,7 +72,6 @@ class CulturalAnalystAgent(BaseAgent):
             )
             low_context = len(chunks) < 2
 
-            # 2. Construir prompt con Jinja2
             prompt = self._build_prompt(
                 retrieved_chunks=chunks,
                 motif_description=motif_description,
@@ -80,14 +79,24 @@ class CulturalAnalystAgent(BaseAgent):
                 similarity_matches=similarity_matches,
             )
 
-            # 3. Inferencia Gemini
-            response_data = await self._llm.generate_json(prompt, system=_SYSTEM_PROMPT)
-
-            # 4. Validar y normalizar taxonomía
-            taxonomy_raw = response_data.get("taxonomy", "Indeterminado")
-            taxonomy = TaxonomyCategory.from_str(taxonomy_raw).value
-            confidence = float(response_data.get("confidence", 0.0))
-            justification = response_data.get("justification", "")
+            fallback_used = False
+            try:
+                response_data = await self._llm.generate_json(prompt, system=_SYSTEM_PROMPT)
+                taxonomy_raw = str(response_data.get("taxonomy", "Indeterminado"))
+                taxonomy = TaxonomyCategory.from_str(taxonomy_raw).value
+                confidence = float(response_data.get("confidence", 0.0))
+                justification = str(response_data.get("justification", ""))
+            except Exception as llm_err:
+                fallback_used = True
+                log.warning("a4_llm_fallback", error=str(llm_err), task_id=input.task_id)
+                heuristic = self._heuristic_classification(
+                    motif_description=motif_description,
+                    detected_shapes=detected_shapes,
+                    similarity_matches=similarity_matches,
+                )
+                taxonomy = str(heuristic["taxonomy"])
+                confidence = float(heuristic["confidence"])
+                justification = str(heuristic["justification"])
 
             result = ClassificationResult(
                 taxonomy=taxonomy,
@@ -96,19 +105,43 @@ class CulturalAnalystAgent(BaseAgent):
                 retrieved_context=chunks,
                 requires_validation=confidence < settings.confidence_threshold,
                 low_context_quality=low_context,
-                status="success",
+                status="fallback" if fallback_used else "success",
             )
 
-            # 5. Generar descripción enriquecida del petroglifo con probabilidad de sitio.
-            description_payload = await self._generate_petroglyph_description(
-                taxonomy=taxonomy,
-                confidence=confidence,
-                justification=justification,
-                motif_description=motif_description,
-                detected_shapes=detected_shapes,
-                similarity_matches=similarity_matches,
-                site_metadata=site_metadata,
-            )
+            if fallback_used:
+                description_payload = self._heuristic_description(
+                    taxonomy=taxonomy,
+                    confidence=confidence,
+                    justification=justification,
+                    motif_description=motif_description,
+                    detected_shapes=detected_shapes,
+                    similarity_matches=similarity_matches,
+                    site_metadata=site_metadata,
+                )
+            else:
+                try:
+                    description_payload = await self._generate_petroglyph_description(
+                        taxonomy=taxonomy,
+                        confidence=confidence,
+                        justification=justification,
+                        motif_description=motif_description,
+                        detected_shapes=detected_shapes,
+                        similarity_matches=similarity_matches,
+                        site_metadata=site_metadata,
+                    )
+                except Exception as desc_err:
+                    fallback_used = True
+                    log.warning("a4_description_fallback", error=str(desc_err), task_id=input.task_id)
+                    description_payload = self._heuristic_description(
+                        taxonomy=taxonomy,
+                        confidence=confidence,
+                        justification=justification,
+                        motif_description=motif_description,
+                        detected_shapes=detected_shapes,
+                        similarity_matches=similarity_matches,
+                        site_metadata=site_metadata,
+                    )
+
             detailed_description = str(description_payload.get("detailed_description", "")).strip()
             probable_site = str(description_payload.get("probable_site", "")).strip()
             site_probability = float(description_payload.get("site_probability", 0.0))
@@ -116,7 +149,9 @@ class CulturalAnalystAgent(BaseAgent):
             if not isinstance(key_figure_info, list):
                 key_figure_info = [str(key_figure_info)]
 
-            description_embedding = await self._embedder.embed(detailed_description or justification or motif_description)
+            description_embedding = await self._embedder.embed(
+                detailed_description or justification or motif_description
+            )
             rag_feedback = await self._compute_rag_feedback(
                 description_embedding=description_embedding,
                 retrieved_chunks=chunks,
@@ -124,7 +159,6 @@ class CulturalAnalystAgent(BaseAgent):
 
             elapsed = round((time.monotonic() - t0) * 1000)
 
-            # 6. Persistir en base de datos si hay sesión disponible
             if self._session:
                 try:
                     await self._persist(
@@ -140,18 +174,17 @@ class CulturalAnalystAgent(BaseAgent):
                         rag_feedback=rag_feedback,
                     )
                 except Exception as persist_err:
-                    log.warning(
-                        "a4_persist_failed",
-                        error=str(persist_err),
-                        task_id=input.task_id,
-                    )
+                    log.warning("a4_persist_failed", error=str(persist_err), task_id=input.task_id)
 
-            log.info("a4_analyst_done",
-                     task_id=input.task_id,
-                     taxonomy=taxonomy,
-                     confidence=confidence,
-                     chunks_used=len(chunks),
-                     latency_ms=elapsed)
+            log.info(
+                "a4_analyst_done",
+                task_id=input.task_id,
+                taxonomy=taxonomy,
+                confidence=confidence,
+                chunks_used=len(chunks),
+                latency_ms=elapsed,
+                fallback_used=fallback_used,
+            )
 
             output_data = result.model_dump()
             output_data["petroglyph_description"] = {
@@ -171,6 +204,7 @@ class CulturalAnalystAgent(BaseAgent):
                     "latency_ms": elapsed,
                     "chunks_used": len(chunks),
                     "low_context": low_context,
+                    "fallback_used": fallback_used,
                 },
             )
 
@@ -255,6 +289,98 @@ class CulturalAnalystAgent(BaseAgent):
             "key_figure_info": description_data.get("key_figure_info", []),
         }
 
+    def _heuristic_classification(
+        self,
+        *,
+        motif_description: str,
+        detected_shapes: list[str],
+        similarity_matches: list[dict],
+    ) -> dict:
+        scores = {cat.value: 0 for cat in TaxonomyCategory}
+        evidence: list[str] = []
+
+        taxonomy_votes: dict[str, int] = {}
+        for match in similarity_matches:
+            taxonomy = str(match.get("taxonomy", "")).strip()
+            if taxonomy:
+                taxonomy_votes[taxonomy] = taxonomy_votes.get(taxonomy, 0) + 1
+        if taxonomy_votes:
+            best_taxonomy = max(taxonomy_votes, key=taxonomy_votes.get)
+            category = TaxonomyCategory.from_str(best_taxonomy)
+            if category != TaxonomyCategory.INDETERMINADO:
+                scores[category.value] += 3
+                evidence.append(f"similitud iconográfica dominante: {best_taxonomy}")
+
+        text = f"{motif_description} {' '.join(detected_shapes)}".lower()
+        if any(word in text for word in ("figura humana", "humano", "rostro", "persona", "brazos", "cuerpo")):
+            scores[TaxonomyCategory.ANTROPOMORFO.value] += 3
+            evidence.append("rasgos antropomorfos en la descripción o las formas")
+        if any(word in text for word in ("animal", "ave", "serpiente", "felino", "zoomorfo")):
+            scores[TaxonomyCategory.ZOOMORFO.value] += 3
+            evidence.append("rasgos zoomorfos en la descripción o las formas")
+        if any(word in text for word in ("círculo", "circulo", "línea", "linea", "espiral", "triángulo", "triangulo", "cuadrado", "geométr", "geometr")):
+            scores[TaxonomyCategory.GEOMETRICO.value] += 3
+            evidence.append("patrones geométricos en la descripción o las formas")
+        if any(word in text for word in ("sol", "luna", "estrella", "astro", "astron")):
+            scores[TaxonomyCategory.ASTRONOMICO.value] += 3
+            evidence.append("referencias astronómicas en la descripción")
+        if any(word in text for word in ("planta", "flor", "hoja", "vegetal", "fitom")):
+            scores[TaxonomyCategory.FITOMORFO.value] += 3
+            evidence.append("rasgos fitomorfos en la descripción")
+
+        if len(set(taxonomy_votes)) >= 2:
+            scores[TaxonomyCategory.HIBRIDO.value] += 2
+            evidence.append("coincidencias mixtas en el comparador visual")
+
+        taxonomy = max(scores, key=scores.get)
+        if scores[taxonomy] == 0:
+            taxonomy = TaxonomyCategory.INDETERMINADO.value
+            confidence = 0.25
+            evidence.append("no hubo evidencia fuerte suficiente")
+        else:
+            confidence = min(0.75, 0.30 + (scores[taxonomy] * 0.08))
+
+        return {
+            "taxonomy": taxonomy,
+            "confidence": round(confidence, 2),
+            "justification": (
+                "Clasificación heurística de respaldo. "
+                + ("; ".join(evidence) if evidence else "Se priorizó la señal más consistente disponible.")
+            ),
+        }
+
+    def _heuristic_description(
+        self,
+        *,
+        taxonomy: str,
+        confidence: float,
+        justification: str,
+        motif_description: str,
+        detected_shapes: list[str],
+        similarity_matches: list[dict],
+        site_metadata: dict,
+    ) -> dict:
+        best_match = similarity_matches[0] if similarity_matches else {}
+        probable_site = str(best_match.get("site_name", site_metadata.get("site", "No definido")))
+        site_probability = float(best_match.get("similarity_score", 0.35 if not similarity_matches else 0.55))
+        shape_text = ", ".join(detected_shapes) if detected_shapes else "sin formas detectadas"
+        detailed_description = (
+            f"Descripción heurística del petroglifo clasificado como {taxonomy}. "
+            f"El sistema observó {shape_text} y el motivo fue descrito como: {motif_description or 'no disponible'}. "
+            f"Justificación: {justification}"
+        )
+        key_figure_info = [
+            f"Clasificación de respaldo: {taxonomy}",
+            f"Confianza estimada: {round(confidence * 100, 1)}%",
+            f"Formas observadas: {shape_text}",
+        ]
+        return {
+            "detailed_description": detailed_description,
+            "probable_site": probable_site,
+            "site_probability": max(0.0, min(site_probability, 1.0)),
+            "key_figure_info": key_figure_info,
+        }
+
     async def _compute_rag_feedback(
         self,
         description_embedding: list[float],
@@ -272,15 +398,17 @@ class CulturalAnalystAgent(BaseAgent):
                 SELECT
                     source_document,
                     chunk_text,
-                    1 - (embedding <=> :desc_vec::vector) AS similarity
+                    1 - (embedding <=> CAST(:desc_vec AS vector)) AS similarity
                 FROM archaeological_chunks
                 WHERE id = CAST(:chunk_id AS uuid)
                 LIMIT 1
             """)
-            row = (await self._session.execute(
-                similarity_sql,
-                {"desc_vec": str(description_embedding), "chunk_id": chunk_id},
-            )).first()
+            row = (
+                await self._session.execute(
+                    similarity_sql,
+                    {"desc_vec": str(description_embedding), "chunk_id": chunk_id},
+                )
+            ).first()
             if not row:
                 continue
             top_matches.append(
@@ -317,14 +445,11 @@ class CulturalAnalystAgent(BaseAgent):
     ) -> None:
         from infrastructure.database.models.models import (
             LLMClassification,
-            PromptLog,
-            PetroglyphModel,
             PetroglyphDescriptionEmbedding,
+            PetroglyphModel,
+            PromptLog,
         )
 
-        # LLMClassification tiene FK NOT NULL hacia petroglyphs.id.
-        # El pipeline no crea PetroglyphModel explícitamente (usa task_id como ID),
-        # así que lo creamos como stub si aún no existe para satisfacer la FK.
         existing = await self._session.get(PetroglyphModel, petroglyph_id)
         if not existing:
             stub = PetroglyphModel(id=petroglyph_id)

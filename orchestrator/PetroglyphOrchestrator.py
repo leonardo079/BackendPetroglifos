@@ -13,6 +13,7 @@ from typing import Literal
 from langgraph.graph import StateGraph, END
 from orchestrator.state.graph_state import PetroglyphState
 from agents.base_agent import AgentInput
+from core.domain.site_normalization import normalize_site_metadata
 
 log = structlog.get_logger(__name__)
 
@@ -120,6 +121,7 @@ class PetroglyphOrchestrator:
         state["detected_shapes"] = result.result.get("detected_shapes", [])
         state["motifs_visible"] = result.result.get("motifs_visible", False)
         state["detection_confidence"] = result.result.get("detection_confidence", 0.0)
+        state["segmentation_validation"] = result.result.get("segmentation_validation", {})
         
         # Guardar info de deterioro para el router
         state["_deterioration_detected"] = result.result.get("deterioration_detected", False)
@@ -181,11 +183,13 @@ class PetroglyphOrchestrator:
             payload={
                 "preprocessed_image_path": state.get("preprocessed_image_path", ""),
                 "deterioration_detected": state.get("_deterioration_detected", True),
+                "segmentation_validation": state.get("segmentation_validation", {}),
             },
         )
         result = await self._a5.run(agent_input)
         
         state["reconstructed_image_path"] = result.result.get("reconstructed_image_path", "")
+        state["reconstruction_diagnostics"] = result.result.get("reconstruction_diagnostics", {})
         return state
 
     async def _run_a6(self, state: PetroglyphState) -> PetroglyphState:
@@ -211,6 +215,8 @@ class PetroglyphOrchestrator:
             "requires_validation": state.get("a4_requires_validation", True),
             "petroglyph_description": state.get("a4_petroglyph_description", {}),
             "rag_feedback": state.get("a4_rag_feedback", {}),
+            "segmentation_validation": state.get("segmentation_validation", {}),
+            "reconstruction_diagnostics": state.get("reconstruction_diagnostics", {}),
             "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
             "researcher_notes": state["site_metadata"].get("researcher_notes", ""),
         }
@@ -219,7 +225,6 @@ class PetroglyphOrchestrator:
         result = await self._a6.run(agent_input)
         
         state["icanh_pdf_url"] = result.result.get("icanh_pdf_url", "")
-        state["icanh_pdf_cloudinary_url"] = result.result.get("icanh_pdf_cloudinary_url", "")
         state["icanh_json"] = result.result.get("icanh_record", {})
         return state
 
@@ -272,11 +277,23 @@ class PetroglyphOrchestrator:
         t0 = time.monotonic()
         log.info("orchestrator_start", task_id=task_id, image=raw_image_path)
 
+        normalized_site, normalized_municipality, normalized_department = normalize_site_metadata(
+            site_metadata.get("site", ""),
+            site_metadata.get("municipality", ""),
+            site_metadata.get("department", ""),
+        )
+        normalized_site_metadata = {
+            **site_metadata,
+            "site": normalized_site,
+            "municipality": normalized_municipality,
+            "department": normalized_department,
+        }
+
         # Estado inicial
         initial_state: PetroglyphState = {
             "petroglyph_id": task_id,
             "raw_image_path": raw_image_path,
-            "site_metadata": site_metadata,
+            "site_metadata": normalized_site_metadata,
         }
 
         try:
@@ -296,7 +313,6 @@ class PetroglyphOrchestrator:
                 "total_time_ms": elapsed,
                 "classification": final_state["a4_taxonomy_result"],
                 "icanh_pdf_url": final_state.get("icanh_pdf_url", ""),
-                "icanh_pdf_cloudinary_url": final_state.get("icanh_pdf_cloudinary_url", ""),
                 "icanh_json": final_state.get("icanh_json", {}),
             }
 

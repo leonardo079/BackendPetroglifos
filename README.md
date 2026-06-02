@@ -10,7 +10,7 @@ Arquitectura hexagonal + LangGraph + RAG (Gemini + pgvector).
 | A2 | Detector de motivos | YOLOv8 |
 | A3 | Comparador iconográfico | EfficientNet-B0 + pgvector |
 | A4 | Analista Cultural (LLM) | RAG + Gemini 1.5 Flash |
-| A5 | Reconstructor GAN | GAN (solo deterioro) |
+| A5 | Reconstructor GAN | GAN + validacion de dano (solo deterioro) |
 | A6 | Documentador ICANH | Jinja2 + WeasyPrint |
 
 ## Inicio rápido

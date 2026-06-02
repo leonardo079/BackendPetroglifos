@@ -12,7 +12,8 @@ from config.settings import settings
 
 log = structlog.get_logger(__name__)
 
-YOLO_MODEL_PATH = Path("models/petroglifos_yolov8.pt")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+YOLO_MODEL_PATH = PROJECT_ROOT / "models" / "petroglifos_yolov8.pt"
 
 # Categorías de formas detectables con el método heurístico
 SHAPE_LABELS = {
@@ -36,16 +37,38 @@ class DetectorAgent(BaseAgent):
             try:
                 from ultralytics import YOLO
                 self._yolo = YOLO(str(YOLO_MODEL_PATH))
-                log.info("yolo_loaded", model=str(YOLO_MODEL_PATH))
+                log.info(
+                    "yolo_loaded",
+                    model=str(YOLO_MODEL_PATH),
+                    cwd=str(Path.cwd()),
+                )
             except Exception as e:
-                log.warning("yolo_load_failed", error=str(e), fallback="heuristic")
+                log.warning(
+                    "yolo_load_failed",
+                    error=str(e),
+                    model=str(YOLO_MODEL_PATH),
+                    cwd=str(Path.cwd()),
+                    fallback="heuristic",
+                )
         else:
-            log.warning("yolo_model_not_found", path=str(YOLO_MODEL_PATH), fallback="heuristic")
+            log.warning(
+                "yolo_model_not_found",
+                path=str(YOLO_MODEL_PATH),
+                cwd=str(Path.cwd()),
+                fallback="heuristic",
+            )
 
     async def run(self, input: AgentInput) -> AgentOutput:
         t0 = time.monotonic()
         image_path: str = input.payload.get("preprocessed_image_path", "") or \
                           input.payload.get("image_path", "")
+        log.info(
+            "a2_detector_input",
+            task_id=input.task_id,
+            image_path=image_path,
+            yolo_loaded=self._yolo is not None,
+            cwd=str(Path.cwd()),
+        )
 
         if not image_path or not os.path.exists(image_path):
             return AgentOutput(
@@ -89,8 +112,13 @@ class DetectorAgent(BaseAgent):
         results = self._yolo(image_path, conf=settings.confidence_threshold, verbose=False)
         boxes = []
         shapes: list[str] = []
-        for r in results:
-            for box in r.boxes:
+        result_count = 0
+        raw_box_count = 0
+        for r in results or []:
+            result_count += 1
+            result_boxes = getattr(r, "boxes", None) or []
+            raw_box_count += len(result_boxes)
+            for box in result_boxes:
                 cls_name = self._yolo.names[int(box.cls)]
                 shapes.append(cls_name)
                 boxes.append({
@@ -98,6 +126,16 @@ class DetectorAgent(BaseAgent):
                     "confidence": float(box.conf),
                     "xyxy": box.xyxy[0].tolist(),
                 })
+
+        log.info(
+            "a2_yolo_result",
+            image_path=image_path,
+            results_count=result_count,
+            raw_box_count=raw_box_count,
+            filtered_box_count=len(boxes),
+            classes=shapes,
+            confidence=max((b["confidence"] for b in boxes), default=0.0),
+        )
 
         return {
             "motifs_visible": len(boxes) > 0,
@@ -138,6 +176,13 @@ class DetectorAgent(BaseAgent):
         # Limitar a los 10 contornos más grandes
         boxes = sorted(boxes, key=lambda b: (b["xyxy"][2]-b["xyxy"][0])*(b["xyxy"][3]-b["xyxy"][1]), reverse=True)[:10]
         shapes = [b["label"] for b in boxes]
+
+        log.info(
+            "a2_heuristic_result",
+            boxes_count=len(boxes),
+            classes=shapes,
+            confidence=0.5 if boxes else 0.0,
+        )
 
         return {
             "motifs_visible": len(boxes) > 0,
@@ -187,7 +232,7 @@ class DetectorAgent(BaseAgent):
 
             score = float(data.get("validation_score", 0.0))
             status = str(data.get("segmentation_status", "ok"))
-            warnings: list[str] = data.get("validation_warnings", [])
+            warnings = self._normalize_warnings(data.get("validation_warnings"))
             area_percent = float(data.get("area_percent", 0.0))
 
             deterioration_detected = (
@@ -203,6 +248,8 @@ class DetectorAgent(BaseAgent):
                 score=score,
                 status=status,
                 warnings=warnings,
+                warnings_count=len(warnings),
+                area_percent=area_percent,
                 deterioration=deterioration_detected,
             )
             return {
@@ -211,6 +258,13 @@ class DetectorAgent(BaseAgent):
                 "segmentation_status": status,
                 "segmentation_warnings": warnings,
                 "area_percent": area_percent,
+                "segmentation_validation": {
+                    "validation_score": score,
+                    "segmentation_status": status,
+                    "validation_warnings": warnings,
+                    "area_percent": area_percent,
+                    "deterioration_detected": deterioration_detected,
+                },
             }
 
         except Exception as e:
@@ -227,4 +281,23 @@ class DetectorAgent(BaseAgent):
                 "segmentation_status": "unknown",
                 "segmentation_warnings": ["api_unavailable"],
                 "area_percent": 0.0,
+                "segmentation_validation": {
+                    "validation_score": 0.0,
+                    "segmentation_status": "unknown",
+                    "validation_warnings": ["api_unavailable"],
+                    "area_percent": 0.0,
+                    "deterioration_detected": True,
+                },
             }
+
+    def _normalize_warnings(self, warnings: object) -> list[str]:
+        if warnings is None:
+            return []
+        if isinstance(warnings, list):
+            return [str(item) for item in warnings if item is not None and str(item).strip()]
+        if isinstance(warnings, tuple) or isinstance(warnings, set):
+            return [str(item) for item in warnings if item is not None and str(item).strip()]
+        if isinstance(warnings, str):
+            text = warnings.strip()
+            return [text] if text else []
+        return [str(warnings)] if str(warnings).strip() else []

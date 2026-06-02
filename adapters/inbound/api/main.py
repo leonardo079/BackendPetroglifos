@@ -10,6 +10,7 @@ Endpoints:
     GET  /sites/{site_id}               — Detalle de un sitio (con conexiones del grafo)
     GET  /graph                         — Red social de similitud iconográfica (JSON)
     GET  /graph/export                  — HTML interactivo del grafo (PyVis)
+    GET  /graph/export/image            — Imagen estática del grafo (PNG)
     GET  /graph/pagerank                — Ranking de centralidad PageRank por sitio
     GET  /graph/communities             — Comunidades iconográficas (Louvain)
     GET  /graph/betweenness             — Centralidad de intermediación (sitios puente)
@@ -30,9 +31,9 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
+from core.domain.site_normalization import normalize_site_metadata
 from infrastructure.database.session import get_session
 from infrastructure.observability.logging_config import configure_logging
-from infrastructure.storage.cloudinary_service import upload_image
 
 configure_logging()
 log = structlog.get_logger(__name__)
@@ -132,10 +133,15 @@ async def classify_async(payload: ClassifyRequest) -> ClassifyResponse:
     from infrastructure.messaging.tasks import classify_petroglyph_task
 
     task_id = payload.petroglyph_id or str(uuid.uuid4())
+    site, municipality, department = normalize_site_metadata(
+        payload.site,
+        payload.municipality,
+        payload.department,
+    )
     site_metadata = {
-        "site": payload.site,
-        "municipality": payload.municipality,
-        "department": payload.department,
+        "site": site,
+        "municipality": municipality,
+        "department": department,
         "gps_coordinates": payload.gps_coordinates,
         "conservation_status": payload.conservation_status,
         "researcher_notes": payload.researcher_notes,
@@ -172,12 +178,16 @@ async def classify_with_upload(
     suffix = Path(file.filename or "image.jpg").suffix or ".jpg"
     dest = UPLOAD_DIR / f"{task_id}{suffix}"
     dest.write_bytes(await file.read())
-    cloudinary_url = upload_image(dest, public_id=task_id)
 
+    normalized_site, normalized_municipality, normalized_department = normalize_site_metadata(
+        site,
+        municipality,
+        department,
+    )
     site_metadata = {
-        "site": site,
-        "municipality": municipality,
-        "department": department,
+        "site": normalized_site,
+        "municipality": normalized_municipality,
+        "department": normalized_department,
         "conservation_status": conservation_status,
         "researcher_notes": researcher_notes,
     }
@@ -189,7 +199,6 @@ async def classify_with_upload(
         "api_classify_upload_enqueued",
         task_id=task_id,
         filename=file.filename,
-        cloudinary_url=cloudinary_url or None,
     )
     return ClassifyResponse(
         task_id=task_id,
@@ -210,10 +219,15 @@ async def classify_sync(
     from orchestrator.PetroglyphOrchestrator import create_orchestrator
 
     task_id = payload.petroglyph_id or str(uuid.uuid4())
+    site, municipality, department = normalize_site_metadata(
+        payload.site,
+        payload.municipality,
+        payload.department,
+    )
     site_metadata = {
-        "site": payload.site,
-        "municipality": payload.municipality,
-        "department": payload.department,
+        "site": site,
+        "municipality": municipality,
+        "department": department,
         "gps_coordinates": payload.gps_coordinates,
         "conservation_status": payload.conservation_status,
         "researcher_notes": payload.researcher_notes,
@@ -357,6 +371,7 @@ async def _build_graph_from_db(session: AsyncSession):
 
     Usa el nombre del sitio como ID de nodo (no el UUID) para que los edges
     reconstruidos desde site_graph_edges conecten correctamente con los nodos.
+    Preserva también weight, evidence_count e is_provisional.
     """
     from infrastructure.database.models.models import RupestranSiteModel, SiteGraphEdge
     from orchestrator.graph.petroglyph_graph import PetroglyphSocialGraph
@@ -382,8 +397,13 @@ async def _build_graph_from_db(session: AsyncSession):
         name_a = id_to_name.get(edge.site_a_id)
         name_b = id_to_name.get(edge.site_b_id)
         if name_a and name_b:
-            taxonomy = (edge.shared_taxonomies or [None])[0] or ""
-            graph.add_or_update_edge(name_a, name_b, weight=edge.weight, taxonomy=taxonomy)
+            graph.load_persisted_edge(
+                name_a,
+                name_b,
+                weight=edge.weight,
+                evidence_count=edge.evidence_count,
+                shared_taxonomies=list(edge.shared_taxonomies or []),
+            )
 
     return graph
 
@@ -409,6 +429,16 @@ async def export_graph_html(session: AsyncSession = Depends(get_session)) -> Fil
     if not html_path or not Path(html_path).exists():
         raise HTTPException(status_code=500, detail="Error generando el grafo HTML.")
     return FileResponse(html_path, media_type="text/html", filename="red_rupestre.html")
+
+
+@app.get("/graph/export/image", tags=["Grafo Social"])
+async def export_graph_image(session: AsyncSession = Depends(get_session)) -> FileResponse:
+    """Exporta una imagen PNG estática del grafo social."""
+    graph = await _build_graph_from_db(session)
+    image_path = graph.export_image()
+    if not image_path or not Path(image_path).exists():
+        raise HTTPException(status_code=500, detail="Error generando la imagen del grafo.")
+    return FileResponse(image_path, media_type="image/png", filename="red_rupestre.png")
 
 
 @app.get("/graph/pagerank", tags=["Grafo Social"])
