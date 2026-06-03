@@ -93,6 +93,13 @@ class IngestResponse(BaseModel):
     source: str
 
 
+class IngestDirectoryResponse(BaseModel):
+    status: str
+    directory: str
+    files_processed: int
+    total_chunks_inserted: int
+
+
 class SiteResponse(BaseModel):
     id: str
     name: str
@@ -313,12 +320,48 @@ async def ingest_document(
     """
     from infrastructure.messaging.tasks import ingest_document_task
 
+    if not settings.rag_ingest_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="La ingesta RAG está deshabilitada por ahora. Habilítala cuando quieras ejecutarla.",
+        )
+
     dest = UPLOAD_DIR / f"corpus_{uuid.uuid4().hex}_{file.filename}"
     dest.write_bytes(await file.read())
 
     ingest_document_task.apply_async(args=[str(dest), source_name])
     log.info("api_ingest_enqueued", source=source_name, file=file.filename)
     return IngestResponse(status="queued", chunks_inserted=0, source=source_name)
+
+
+@app.post("/ingest-directory", response_model=IngestDirectoryResponse, tags=["Corpus RAG"])
+async def ingest_directory(
+    directory_path: str = Form(...),
+) -> IngestDirectoryResponse:
+    """
+    Ingesta todos los documentos PDF/TXT de una carpeta local del proyecto.
+    La ingesta se realiza en background vía Celery.
+    """
+    from infrastructure.messaging.tasks import ingest_directory_task
+
+    if not settings.rag_ingest_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="La ingesta RAG está deshabilitada por ahora. Habilítala cuando quieras ejecutarla.",
+        )
+
+    directory = Path(directory_path).expanduser()
+    if not directory.exists() or not directory.is_dir():
+        raise HTTPException(status_code=400, detail=f"La ruta no es una carpeta válida: {directory_path}")
+
+    ingest_directory_task.apply_async(args=[str(directory)])
+    log.info("api_ingest_directory_enqueued", directory=str(directory))
+    return IngestDirectoryResponse(
+        status="queued",
+        directory=str(directory),
+        files_processed=0,
+        total_chunks_inserted=0,
+    )
 
 
 # ── Sitios rupestres ──────────────────────────────────────────────────────────

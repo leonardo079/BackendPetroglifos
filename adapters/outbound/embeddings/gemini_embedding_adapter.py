@@ -20,7 +20,7 @@ log = structlog.get_logger(__name__)
 class GeminiEmbeddingAdapter(EmbeddingPort):
     """Genera embeddings y cae a un vector local si Gemini falla."""
 
-    _DIMENSIONS = 768
+    _DIMENSIONS = 1280
 
     def __init__(self) -> None:
         self._model = self._normalize_model_name(settings.embedding_model)
@@ -57,6 +57,15 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
             return vector
         return [value / norm for value in vector]
 
+    @classmethod
+    def _coerce_dimensions(cls, embedding: list[float]) -> list[float]:
+        """Normaliza el tamaño del vector al esperado por la BD."""
+        if len(embedding) == cls._DIMENSIONS:
+            return embedding
+        if len(embedding) > cls._DIMENSIONS:
+            return embedding[: cls._DIMENSIONS]
+        return embedding + [0.0] * (cls._DIMENSIONS - len(embedding))
+
     @retry(
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(4),
@@ -68,11 +77,11 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
         t0 = time.monotonic()
         try:
             result = await asyncio.to_thread(self._embeddings.embed_documents, [text])
-            embedding = result[0] if result else []
+            embedding = self._coerce_dimensions(result[0] if result else [])
             source = "gemini"
         except Exception as exc:
             log.warning("embedding_fallback_local", error=str(exc), model=self._model)
-            embedding = self._local_embedding(text)
+            embedding = self._coerce_dimensions(self._local_embedding(text))
             source = "local_hash"
 
         elapsed = (time.monotonic() - t0) * 1000
@@ -94,10 +103,11 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
     async def embed_query(self, text: str) -> list[float]:
         """Genera un embedding optimizado para búsqueda (query)."""
         try:
-            return await asyncio.to_thread(self._embeddings.embed_query, text)
+            embedding = await asyncio.to_thread(self._embeddings.embed_query, text)
+            return self._coerce_dimensions(embedding)
         except Exception as exc:
             log.warning("embedding_query_fallback_local", error=str(exc), model=self._model)
-            return self._local_embedding(text)
+            return self._coerce_dimensions(self._local_embedding(text))
 
     async def embed_batch(self, texts: list[str], batch_size: int = 20) -> list[list[float]]:
         """Procesa una lista de textos en lotes."""
@@ -110,5 +120,5 @@ class GeminiEmbeddingAdapter(EmbeddingPort):
             except Exception as exc:
                 log.warning("embedding_batch_fallback_local", error=str(exc), batch_size=len(batch))
                 batch_embeddings = [self._local_embedding(text) for text in batch]
-            embeddings.extend(batch_embeddings)
+            embeddings.extend([self._coerce_dimensions(embedding) for embedding in batch_embeddings])
         return embeddings

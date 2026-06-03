@@ -136,12 +136,78 @@ def ingest_document_task(self, file_path: str, source_name: str | None = None) -
     """
     log.info("ingest_task_start", file=file_path)
     try:
+        from config.settings import settings
+
+        if not settings.rag_ingest_enabled:
+            log.warning("ingest_task_skipped", file=file_path, reason="rag_ingest_disabled")
+            return {"status": "skipped", "reason": "rag_ingest_disabled", "file": file_path, "chunks_inserted": 0}
+
         chunks = _run_async(_run_ingestion(file_path, source_name))
         log.info("ingest_task_done", file=file_path, chunks=chunks)
         return {"status": "success", "chunks_inserted": chunks, "file": file_path}
     except Exception as exc:
         log.error("ingest_task_error", file=file_path, error=str(exc))
         raise self.retry(exc=exc)
+
+
+@celery_app.task(
+    bind=True,
+    name="petroglifos.ingest_directory",
+    queue="ingestion",
+    max_retries=2,
+    default_retry_delay=60,
+)
+def ingest_directory_task(self, directory_path: str) -> dict:
+    """
+    Tarea de ingesta masiva: procesa todos los documentos de un directorio.
+    """
+    log.info("ingest_directory_task_start", directory=directory_path)
+    try:
+        from config.settings import settings
+
+        if not settings.rag_ingest_enabled:
+            log.warning("ingest_directory_task_skipped", directory=directory_path, reason="rag_ingest_disabled")
+            return {
+                "status": "skipped",
+                "reason": "rag_ingest_disabled",
+                "directory": directory_path,
+                "files_processed": 0,
+                "total_chunks_inserted": 0,
+                "results": {},
+            }
+
+        result = _run_async(_run_directory_ingestion(directory_path))
+        log.info(
+            "ingest_directory_task_done",
+            directory=directory_path,
+            files_processed=result.get("files_processed", 0),
+            total_chunks_inserted=result.get("total_chunks_inserted", 0),
+        )
+        return {"status": "success", **result, "directory": directory_path}
+    except Exception as exc:
+        log.error("ingest_directory_task_error", directory=directory_path, error=str(exc))
+        raise self.retry(exc=exc)
+
+
+async def _run_directory_ingestion(directory_path: str) -> dict:
+    from infrastructure.database.session import AsyncSessionLocal
+    from adapters.outbound.embeddings.gemini_embedding_adapter import GeminiEmbeddingAdapter
+    from adapters.outbound.vector_store.pgvector_adapter import PgvectorAdapter
+    from rag.ingestion.document_ingester import DocumentIngester
+
+    async with AsyncSessionLocal() as session:
+        embedder = GeminiEmbeddingAdapter()
+        vector_store = PgvectorAdapter(session)
+        ingester = DocumentIngester(embedder, vector_store)
+        results = await ingester.ingest_directory(directory_path)
+
+    files_processed = len(results)
+    total_chunks_inserted = sum(max(count, 0) for count in results.values())
+    return {
+        "files_processed": files_processed,
+        "total_chunks_inserted": total_chunks_inserted,
+        "results": results,
+    }
 
 
 async def _run_ingestion(file_path: str, source_name: str | None) -> int:

@@ -21,7 +21,7 @@ class ArchaeologicalChunk(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     source_document: Mapped[str] = mapped_column(sa.Text, nullable=False)
     chunk_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(1280), nullable=True)
     chunk_index: Mapped[int] = mapped_column(sa.Integer, default=0)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
@@ -135,7 +135,7 @@ class PetroglyphDescriptionEmbedding(Base):
     probable_site: Mapped[str] = mapped_column(sa.String(255), default="")
     site_probability: Mapped[float] = mapped_column(sa.Float, default=0.0)
     key_figure_info: Mapped[list] = mapped_column(JSONB, default=list)
-    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(1280), nullable=True)
     rag_feedback: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
 

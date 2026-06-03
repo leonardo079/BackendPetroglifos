@@ -23,12 +23,26 @@ class GeminiAdapter(LLMPort):
 
     def __init__(self, lite: bool = False) -> None:
         genai.configure(api_key=settings.gemini_api_key)
-        model_name = settings.gemini_model_lite if lite else settings.gemini_model
+        model_name = self._normalize_model_name(
+            settings.gemini_model_lite if lite else settings.gemini_model
+        )
         self._model = genai.GenerativeModel(
             model_name=model_name,
             generation_config=_GENERATION_CONFIG,
         )
         self._model_name = model_name
+
+    @staticmethod
+    def _normalize_model_name(model_name: str) -> str:
+        """
+        Gemini espera el nombre del recurso en formato `models/{model}`.
+        Aceptamos nombres planos desde `.env` y los convertimos al formato
+        canónico que usa la API.
+        """
+        normalized = model_name.strip()
+        if normalized.startswith("models/") or normalized.startswith("tunedModels/"):
+            return normalized
+        return f"models/{normalized}"
 
     @retry(
         retry=retry_if_exception_type(Exception),

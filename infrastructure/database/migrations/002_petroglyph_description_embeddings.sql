@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS petroglyph_description_embeddings (
     probable_site        TEXT DEFAULT '',
     site_probability     FLOAT DEFAULT 0.0,
     key_figure_info      JSONB DEFAULT '[]',
-    embedding            VECTOR(768),
+    embedding            VECTOR(1280),
     rag_feedback         JSONB DEFAULT '{}',
     created_at           TIMESTAMPTZ DEFAULT now()
 );

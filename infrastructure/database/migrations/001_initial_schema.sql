@@ -42,7 +42,7 @@ CREATE TABLE archaeological_chunks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_document TEXT NOT NULL,
     chunk_text      TEXT NOT NULL,
-    embedding       VECTOR(768),
+    embedding       VECTOR(1280),
     chunk_index     INTEGER DEFAULT 0,
     metadata        JSONB DEFAULT '{}',
     created_at      TIMESTAMPTZ DEFAULT now()
@@ -94,7 +94,7 @@ CREATE TABLE petroglyph_description_embeddings (
     probable_site        TEXT DEFAULT '',
     site_probability     FLOAT DEFAULT 0.0,
     key_figure_info      JSONB DEFAULT '[]',
-    embedding            VECTOR(768),
+    embedding            VECTOR(1280),
     rag_feedback         JSONB DEFAULT '{}',
     created_at           TIMESTAMPTZ DEFAULT now()
 );

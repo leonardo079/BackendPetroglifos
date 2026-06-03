@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
-    gemini_model_lite: str = "gemini-1.5-flash-8b"
-    embedding_model: str = "gemini-embedding-001"
+    gemini_model_lite: str = "gemini-1.5-flash"
+    embedding_model: str = "gemini-embedding-2"
 
     # PostgreSQL + pgvector
     database_url: str = "postgresql+asyncpg://petro:petro@localhost:5432/petroglifos"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_min_similarity: float = 0.55
     confidence_threshold: float = 0.70
+    rag_ingest_enabled: bool = False
 
     # Object storage
     storage_bucket: str = "petroglifos"
