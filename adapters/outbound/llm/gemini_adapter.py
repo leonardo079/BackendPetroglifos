@@ -14,7 +14,18 @@ _GENERATION_CONFIG = genai.types.GenerationConfig(
     temperature=0.2,
     top_p=0.8,
     top_k=40,
-    max_output_tokens=2048,
+    max_output_tokens=4096,
+)
+
+# Config para respuestas JSON. Usa JSON mode (fuerza JSON válido y cerrado) y
+# un límite de tokens más alto: los modelos 2.5 gastan tokens "pensando" antes
+# de responder, por lo que con 2048 el JSON salía truncado ("Unterminated string").
+_JSON_GENERATION_CONFIG = genai.types.GenerationConfig(
+    temperature=0.2,
+    top_p=0.8,
+    top_k=40,
+    max_output_tokens=8192,
+    response_mime_type="application/json",
 )
 
 
@@ -50,11 +61,14 @@ class GeminiAdapter(LLMPort):
         wait=wait_exponential(multiplier=1, min=2, max=60),
         reraise=True,
     )
-    async def generate(self, prompt: str, system: str = "") -> str:
+    async def generate(self, prompt: str, system: str = "", generation_config=None) -> str:
         """Genera texto con Gemini. Registra latencia y tokens."""
         t0 = time.monotonic()
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
-        response = self._model.generate_content(full_prompt)
+        response = self._model.generate_content(
+            full_prompt,
+            generation_config=generation_config or _GENERATION_CONFIG,
+        )
         elapsed_ms = round((time.monotonic() - t0) * 1000)
 
         text = response.text.strip()
@@ -68,8 +82,8 @@ class GeminiAdapter(LLMPort):
         return text
 
     async def generate_json(self, prompt: str, system: str = "") -> dict:
-        """Genera y parsea una respuesta JSON de Gemini."""
-        raw = await self.generate(prompt, system)
+        """Genera y parsea una respuesta JSON de Gemini (usa JSON mode)."""
+        raw = await self.generate(prompt, system, generation_config=_JSON_GENERATION_CONFIG)
         # Eliminar posibles bloques markdown ```json ... ```
         clean = raw.strip()
         if clean.startswith("```"):
