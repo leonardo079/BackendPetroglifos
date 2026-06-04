@@ -15,7 +15,9 @@ class PetroglyphState(TypedDict, total=False):
     detection_confidence: float
     motifs_visible: bool
     segmentation_validation: dict
+    reconstruction_assessment: dict
     _deterioration_detected: bool   # usado por el router para decidir A3 vs A5
+    _reconstruction_recommended: bool  # deterioro automático OR criterio humano (conservación)
     # A3
     similarity_matches: list[dict]
     # A5

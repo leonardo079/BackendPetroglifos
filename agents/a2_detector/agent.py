@@ -1,5 +1,6 @@
 """A2 — Detector de motivos (YOLOv8 + fallback heurístico con OpenCV)."""
 from __future__ import annotations
+import base64
 import time
 import os
 from pathlib import Path
@@ -132,6 +133,8 @@ class DetectorAgent(BaseAgent):
                 ),
                 "reconstruction_assessment": {
                     "model_deterioration_detected": detection.get("deterioration_detected", False),
+                    "model_damage_recommended": detection.get("model_damage_recommended", False),
+                    "damage_figure_percent": detection.get("damage_figure_percent"),
                     "conservation_status": conservation_status,
                     "conservation_score": conservation_score,
                     "human_reconstruction_recommended": human_reconstruction_recommended,
@@ -153,6 +156,7 @@ class DetectorAgent(BaseAgent):
                  conservation_score=conservation_score,
                  human_reconstruction_recommended=human_reconstruction_recommended,
                  segmentation_score=detection.get("segmentation_score"),
+                 damage_figure_percent=detection.get("damage_figure_percent"),
                  latency_ms=elapsed)
 
         return AgentOutput(
@@ -337,16 +341,21 @@ class DetectorAgent(BaseAgent):
 
     async def _check_deterioration_api(self, image_path: str) -> dict:
         """
-        Consulta /segmentPetroglyph del servicio Keras y determina si la imagen
-        tiene deterioro significativo a partir del validation_score y los warnings
-        producidos por el modelo de segmentación.
+        Determina si la imagen tiene deterioro significativo combinando dos señales
+        del servicio Keras:
 
-        Criterios de deterioro (cualquiera de los siguientes):
+        1. Calidad de la segmentación de la figura (/segmentPetroglyph). Cualquiera de:
           - validation_score < 0        : máscara de baja calidad
           - segmentation_status == 'weak_segmentation'
           - 'fragmented_mask' en warnings : surcos muy fragmentados
           - 'weak_main_component' en warnings : componente principal débil
-          - area_percent < 6.0          : cobertura visible insuficiente para confiar en la lectura
+          - area_percent < 6.0          : cobertura visible insuficiente
+
+        2. Daño de la figura (/segmentDamagePytorch). Se cruza la máscara de daño con
+           la máscara de la figura y se calcula la fracción de la figura dañada. Si
+           supera settings.damage_reconstruction_threshold se fuerza reconstrucción.
+
+        La decisión final es el OR de ambas señales.
 
         Fallback (API no disponible): asume deterioro para forzar reconstrucción
         y no perderse figuras dañadas.
@@ -368,13 +377,26 @@ class DetectorAgent(BaseAgent):
             warnings = self._normalize_warnings(data.get("validation_warnings"))
             area_percent = float(data.get("area_percent", 0.0))
 
-            deterioration_detected = (
+            quality_deterioration = (
                 score < 0
                 or status == "weak_segmentation"
                 or "fragmented_mask" in warnings
                 or "weak_main_component" in warnings
                 or area_percent < 6.0
             )
+
+            # Señal de daño: cruzar la máscara de la figura con la máscara de daño.
+            figure_mask = self._decode_mask_b64(data.get("mask_image"))
+            damage_ratio = await self._figure_damage_ratio_from_api(image_path, figure_mask)
+            damage_figure_percent = (
+                round(damage_ratio * 100, 2) if damage_ratio is not None else None
+            )
+            damage_deterioration = (
+                damage_ratio is not None
+                and damage_ratio >= settings.damage_reconstruction_threshold
+            )
+
+            deterioration_detected = quality_deterioration or damage_deterioration
 
             log.info(
                 "a2_deterioration_api",
@@ -383,6 +405,8 @@ class DetectorAgent(BaseAgent):
                 warnings=warnings,
                 warnings_count=len(warnings),
                 area_percent=area_percent,
+                damage_figure_percent=damage_figure_percent,
+                damage_deterioration=damage_deterioration,
                 deterioration=deterioration_detected,
             )
             return {
@@ -391,11 +415,15 @@ class DetectorAgent(BaseAgent):
                 "segmentation_status": status,
                 "segmentation_warnings": warnings,
                 "area_percent": area_percent,
+                "damage_figure_percent": damage_figure_percent,
+                "model_damage_recommended": damage_deterioration,
                 "segmentation_validation": {
                     "validation_score": score,
                     "segmentation_status": status,
                     "validation_warnings": warnings,
                     "area_percent": area_percent,
+                    "damage_figure_percent": damage_figure_percent,
+                    "model_damage_recommended": damage_deterioration,
                     "deterioration_detected": deterioration_detected,
                 },
             }
@@ -414,14 +442,80 @@ class DetectorAgent(BaseAgent):
                 "segmentation_status": "unknown",
                 "segmentation_warnings": ["api_unavailable"],
                 "area_percent": 0.0,
+                "damage_figure_percent": None,
+                "model_damage_recommended": False,
                 "segmentation_validation": {
                     "validation_score": 0.0,
                     "segmentation_status": "unknown",
                     "validation_warnings": ["api_unavailable"],
                     "area_percent": 0.0,
+                    "damage_figure_percent": None,
+                    "model_damage_recommended": False,
                     "deterioration_detected": True,
                 },
             }
+
+    async def _figure_damage_ratio_from_api(
+        self, image_path: str, figure_mask: np.ndarray | None
+    ) -> float | None:
+        """
+        Consulta /segmentDamagePytorch y devuelve la fracción (0.0-1.0) de la figura
+        que está dañada (daño ∩ figura / área de la figura).
+
+        Retorna None si no se puede determinar (modelo de daño no disponible,
+        figura no detectada, etc.), en cuyo caso la decisión recae solo en los
+        criterios de calidad.
+        """
+        if figure_mask is None:
+            return None
+        damage_url = f"{settings.reconstruction_api_base_url}/segmentDamagePytorch"
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(image_path, "rb") as f:
+                    response = await client.post(
+                        damage_url,
+                        data={"save_png": "false"},
+                        files={"file": (Path(image_path).name, f, "image/jpeg")},
+                    )
+                response.raise_for_status()
+                damage_data = response.json()
+            damage_mask = self._decode_mask_b64(damage_data.get("mask_image"))
+            return self._figure_damage_ratio(figure_mask, damage_mask)
+        except Exception as exc:
+            log.warning("a2_damage_api_failed", error=str(exc), fallback="quality_only")
+            return None
+
+    @staticmethod
+    def _decode_mask_b64(b64_str: object) -> np.ndarray | None:
+        """Decodifica una máscara base64 (PNG en escala de grises) a un array 2D."""
+        if not b64_str or not isinstance(b64_str, str):
+            return None
+        try:
+            raw = base64.b64decode(b64_str)
+            buf = np.frombuffer(raw, np.uint8)
+            return cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _figure_damage_ratio(
+        petro_mask: np.ndarray | None, damage_mask: np.ndarray | None
+    ) -> float | None:
+        """daño ∩ figura / área_figura, como fracción 0.0-1.0."""
+        if petro_mask is None or damage_mask is None:
+            return None
+        if damage_mask.shape != petro_mask.shape:
+            damage_mask = cv2.resize(
+                damage_mask,
+                (petro_mask.shape[1], petro_mask.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        figure = petro_mask > 127
+        figure_area = int(figure.sum())
+        if figure_area == 0:
+            return None
+        damaged = figure & (damage_mask > 127)
+        return float(int(damaged.sum()) / figure_area)
 
     @staticmethod
     def _normalize_conservation_status(value: object) -> str:

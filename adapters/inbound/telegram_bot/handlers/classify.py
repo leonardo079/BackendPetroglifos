@@ -293,6 +293,9 @@ async def _send_result(
         )
         text += SIMILARITY_BLOCK.format(matches=match_lines)
 
+    # En este punto 'text' = clasificación (RESULT_OK + similitudes iconográficas).
+    classification_text = text
+
     pdf_local_path = result.get("icanh_pdf_url", "")
     reconstructed_image_path = result.get("reconstructed_image_path", "")
     reconstruction_assessment = result.get("reconstruction_assessment", {}) or {}
@@ -300,36 +303,48 @@ async def _send_result(
     conservation_score = float(reconstruction_assessment.get("conservation_score", 0.33) or 0.33)
     human_reconstruction = bool(reconstruction_assessment.get("human_reconstruction_recommended", False))
     model_reconstruction = bool(reconstruction_assessment.get("model_deterioration_detected", False))
+
+    # Bloque informativo de reconstrucción (estado + señales).
     if reconstructed_image_path:
-        text += (
-            "\n\n<b>Reconstrucción realizada:</b>\n"
-            f"Se generó una imagen reconstruida porque la evaluación combinada indicó intervención.\n"
+        recon_text = (
+            "🛠️ <b>Reconstrucción realizada</b>\n"
+            "Se generó una imagen reconstruida porque la evaluación combinada indicó intervención.\n"
             f"<b>Estado de conservación:</b> {conservation_status} ({round(conservation_score * 100, 1)}%)\n"
             f"<b>Señal humana:</b> {'recomendada' if human_reconstruction else 'no prioritaria'}\n"
             f"<b>Señal automática:</b> {'deterioro detectado' if model_reconstruction else 'sin deterioro crítico'}\n"
-            "La imagen se adjunta junto con la ficha."
+            "La imagen reconstruida y la ficha se adjuntan a continuación."
         )
     else:
-        text += (
-            "\n\n<b>Reconstrucción:</b>\n"
-            f"No se realizó reconstrucción.\n"
+        recon_text = (
+            "<b>Reconstrucción:</b>\n"
+            "No se realizó reconstrucción.\n"
             f"<b>Estado de conservación:</b> {conservation_status} ({round(conservation_score * 100, 1)}%)\n"
             f"<b>Señal humana:</b> {'recomendada' if human_reconstruction else 'no prioritaria'}\n"
             f"<b>Señal automática:</b> {'deterioro detectado' if model_reconstruction else 'sin deterioro crítico'}\n"
             "El análisis se trabajó sobre la imagen preprocesada."
         )
-    if pdf_local_path:
-        text += RESULT_PDF_NOTE
 
-    # Editar el mensaje de "procesando" con el resultado final
-    await app.bot.edit_message_text(
-        chat_id=chat_id,
-        message_id=status_message_id,
-        text=text,
-        parse_mode=ParseMode.HTML,
-    )
+    pdf_note = RESULT_PDF_NOTE if pdf_local_path else ""
 
-    # Adjuntar solo el PDF local generado por el documentador
+    if reconstructed_image_path:
+        # CON reconstrucción: el mensaje editado muestra el estado de reconstrucción;
+        # la clasificación se envía al FINAL, después de la imagen reconstruida.
+        await app.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_message_id,
+            text=recon_text,
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        # SIN reconstrucción: clasificación + estado en el mismo mensaje editado.
+        await app.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_message_id,
+            text=f"{classification_text}\n\n{recon_text}{pdf_note}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    # Adjuntar el PDF generado por el documentador
     if pdf_local_path:
         pdf_path = Path(pdf_local_path)
         if pdf_path.exists():
@@ -358,3 +373,14 @@ async def _send_result(
                 log.info("bot_reconstructed_image_sent", task_id=task_id)
             except Exception as exc:
                 log.warning("bot_reconstructed_image_send_error", task_id=task_id, error=str(exc))
+
+        # AL FINAL: el mensaje de clasificación (el mismo que en el flujo sin reconstrucción).
+        try:
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text=f"{classification_text}{pdf_note}",
+                parse_mode=ParseMode.HTML,
+            )
+            log.info("bot_classification_sent", task_id=task_id)
+        except Exception as exc:
+            log.warning("bot_classification_send_error", task_id=task_id, error=str(exc))

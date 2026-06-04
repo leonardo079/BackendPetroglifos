@@ -207,6 +207,13 @@ class DocumentorAgent(BaseAgent):
                 f"score={_safe(round(float(reconstruction_assessment.get('conservation_score', 0.0)) * 100, 1)) if reconstruction_assessment else 'N/A'}%, "
                 f"recomendada={_safe(reconstruction_assessment.get('human_reconstruction_recommended', 'N/A'))}",
             )
+            _damage_pct = reconstruction_assessment.get("damage_figure_percent")
+            y = _add_wrapped(
+                fig,
+                y,
+                "Dano de la figura (modelo):",
+                f"{_damage_pct}%" if _damage_pct is not None else "N/A",
+            )
 
             if record.get("requires_expert_validation", True):
                 fig.text(
@@ -312,6 +319,7 @@ class DocumentorAgent(BaseAgent):
     <tr><td>Guide pixels</td><td>{reconstruction_diagnostics.get("reconstruction_response", {}).get("guide_pixel_count", "N/A")}</td></tr>
     <tr><td>Estado de conservacion</td><td>{reconstruction_assessment.get("conservation_status", "N/A")}</td></tr>
     <tr><td>Score humano</td><td>{round(float(reconstruction_assessment.get("conservation_score", 0.0)) * 100, 1) if reconstruction_assessment else "N/A"}%</td></tr>
+    <tr><td>Daño de la figura (modelo)</td><td>{f'{reconstruction_assessment.get("damage_figure_percent")}%' if reconstruction_assessment.get("damage_figure_percent") is not None else "N/A"}</td></tr>
     <tr><td>Reconstruccion recomendada</td><td>{reconstruction_assessment.get("reconstruction_recommended", "N/A")}</td></tr>
 </table>
 

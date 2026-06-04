@@ -105,14 +105,17 @@ class PetroglyphOrchestrator:
         """A2: Detectar motivos."""
         log.info("langgraph_node", node="a2_detector", task_id=state["petroglyph_id"])
         
-        # Determinar qué imagen usar (reconstruida si existe, sino preprocesada)
+        # Determinar qué imagen usar (reconstruida si existe, sino preprocesada).
+        # A2.run prioriza 'preprocessed_image_path', así que le pasamos AHÍ la imagen
+        # activa (la reconstruida tras A5). De lo contrario la re-detección YOLO
+        # post-reconstrucción correría sobre la preprocesada original (bug).
         image_path = state.get("reconstructed_image_path") or state.get("preprocessed_image_path", "")
-        
+
         agent_input = AgentInput(
             task_id=state["petroglyph_id"],
             payload={
                 "image_path": image_path,
-                "preprocessed_image_path": state.get("preprocessed_image_path", ""),
+                "preprocessed_image_path": image_path,
                 "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
             },
         )

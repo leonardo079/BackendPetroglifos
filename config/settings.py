@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     gan_api_url: str = "http://localhost:8001/reconstruct"
     gan_api_key: str = ""
     gan_mock_mode: bool = True
+    # Umbral de daño (fracción de la figura dañada, 0.0-1.0) para forzar
+    # reconstrucción automática en A5. Se mide cruzando la máscara de la figura
+    # (/segmentPetroglyph) con la máscara de daño (/segmentDamagePytorch).
+    damage_reconstruction_threshold: float = 0.70  # env: DAMAGE_RECONSTRUCTION_THRESHOLD
 
     # Telegram
     telegram_bot_token: str = ""
