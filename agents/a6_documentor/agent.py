@@ -41,6 +41,7 @@ class DocumentorAgent(BaseAgent):
             "rag_feedback": p.get("rag_feedback", {}),
             "segmentation_validation": p.get("segmentation_validation", {}),
             "reconstruction_diagnostics": p.get("reconstruction_diagnostics", {}),
+            "reconstruction_assessment": p.get("reconstruction_assessment", {}),
             "detected_shapes": p.get("detected_shapes", []),
             "similarity_matches": p.get("similarity_matches", []),
             "conservation_status": p.get("conservation_status", "Regular"),
@@ -127,6 +128,7 @@ class DocumentorAgent(BaseAgent):
 
         segmentation_validation = record.get("segmentation_validation", {}) or {}
         reconstruction_diagnostics = record.get("reconstruction_diagnostics", {}) or {}
+        reconstruction_assessment = record.get("reconstruction_assessment", {}) or {}
         petroglyph_description = record.get("petroglyph_description", {}) or {}
         rag_feedback = record.get("rag_feedback", {}) or {}
 
@@ -197,6 +199,14 @@ class DocumentorAgent(BaseAgent):
                 f"damage_pixels={_safe(reconstruction_diagnostics.get('reconstruction_response', {}).get('damage_pixel_count', 'N/A'))}, "
                 f"guide_pixels={_safe(reconstruction_diagnostics.get('reconstruction_response', {}).get('guide_pixel_count', 'N/A'))}",
             )
+            y = _add_wrapped(
+                fig,
+                y,
+                "Criterio humano:",
+                f"estado={_safe(reconstruction_assessment.get('conservation_status', 'N/A'))}, "
+                f"score={_safe(round(float(reconstruction_assessment.get('conservation_score', 0.0)) * 100, 1)) if reconstruction_assessment else 'N/A'}%, "
+                f"recomendada={_safe(reconstruction_assessment.get('human_reconstruction_recommended', 'N/A'))}",
+            )
 
             if record.get("requires_expert_validation", True):
                 fig.text(
@@ -217,6 +227,7 @@ class DocumentorAgent(BaseAgent):
         rag_feedback = r.get("rag_feedback", {})
         segmentation_validation = r.get("segmentation_validation", {})
         reconstruction_diagnostics = r.get("reconstruction_diagnostics", {})
+        reconstruction_assessment = r.get("reconstruction_assessment", {})
         rag_avg = round(float(rag_feedback.get("avg_similarity", 0.0)) * 100, 1)
         shapes_html = "".join(f"<li>{s}</li>" for s in r["detected_shapes"])
         matches_html = "".join(
@@ -299,6 +310,9 @@ class DocumentorAgent(BaseAgent):
     <tr><td>Endpoint</td><td>{reconstruction_diagnostics.get("endpoint", "N/A")}</td></tr>
     <tr><td>Damage pixels</td><td>{reconstruction_diagnostics.get("reconstruction_response", {}).get("damage_pixel_count", "N/A")}</td></tr>
     <tr><td>Guide pixels</td><td>{reconstruction_diagnostics.get("reconstruction_response", {}).get("guide_pixel_count", "N/A")}</td></tr>
+    <tr><td>Estado de conservacion</td><td>{reconstruction_assessment.get("conservation_status", "N/A")}</td></tr>
+    <tr><td>Score humano</td><td>{round(float(reconstruction_assessment.get("conservation_score", 0.0)) * 100, 1) if reconstruction_assessment else "N/A"}%</td></tr>
+    <tr><td>Reconstruccion recomendada</td><td>{reconstruction_assessment.get("reconstruction_recommended", "N/A")}</td></tr>
 </table>
 
 <h2>Formas detectadas</h2>

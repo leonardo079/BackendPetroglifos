@@ -29,6 +29,8 @@ class ReconstructorAgent(BaseAgent):
                           input.payload.get("image_path", "")
         deterioration: bool = input.payload.get("deterioration_detected", True)
         segmentation_validation: dict = input.payload.get("segmentation_validation", {})
+        conservation_status: str = str(input.payload.get("conservation_status", "Regular"))
+        reconstruction_assessment: dict = input.payload.get("reconstruction_assessment", {})
 
         if not deterioration:
             # No hay deterioro detectado: pasar imagen sin reconstruir
@@ -42,6 +44,8 @@ class ReconstructorAgent(BaseAgent):
                         "reason": "no_deterioration",
                         "damage_severity": self._damage_severity(segmentation_validation),
                         "segmentation_validation": segmentation_validation,
+                        "conservation_status": conservation_status,
+                        "reconstruction_assessment": reconstruction_assessment,
                     },
                 },
                 status="skipped",
@@ -61,6 +65,8 @@ class ReconstructorAgent(BaseAgent):
                         "pipeline": "mock",
                         "damage_severity": self._damage_severity(segmentation_validation),
                         "segmentation_validation": segmentation_validation,
+                        "conservation_status": conservation_status,
+                        "reconstruction_assessment": reconstruction_assessment,
                     },
                 },
                 status="fallback",
@@ -72,6 +78,7 @@ class ReconstructorAgent(BaseAgent):
                 image_path=image_path,
                 task_id=input.task_id,
                 segmentation_validation=segmentation_validation,
+                conservation_status=conservation_status,
             )
             elapsed = round((time.monotonic() - t0) * 1000)
             log.info("a5_reconstructor_done", task_id=input.task_id, latency_ms=elapsed)
@@ -98,6 +105,8 @@ class ReconstructorAgent(BaseAgent):
                         "error": str(e),
                         "damage_severity": self._damage_severity(segmentation_validation),
                         "segmentation_validation": segmentation_validation,
+                        "conservation_status": conservation_status,
+                        "reconstruction_assessment": reconstruction_assessment,
                     },
                 },
                 status="fallback",
@@ -109,6 +118,7 @@ class ReconstructorAgent(BaseAgent):
         image_path: str,
         task_id: str,
         segmentation_validation: dict,
+        conservation_status: str,
     ) -> tuple[str, dict]:
         """
         Intenta primero el pipeline completo de reconstruccion, que incluye la
@@ -125,6 +135,7 @@ class ReconstructorAgent(BaseAgent):
                     pipeline_name=pipeline_name,
                     file_field=file_field,
                     segmentation_validation=segmentation_validation,
+                    conservation_status=conservation_status,
                 )
             except Exception as exc:
                 pipeline_errors.append(f"{pipeline_name}: {exc}")
@@ -152,7 +163,7 @@ class ReconstructorAgent(BaseAgent):
         severe_damage = (
             score < 0
             or status == "weak_segmentation"
-            or area_percent < 2.0
+            or area_percent < 6.0
             or "fragmented_mask" in warnings
             or "weak_main_component" in warnings
         )
@@ -181,12 +192,12 @@ class ReconstructorAgent(BaseAgent):
         if (
             score < 0
             or status == "weak_segmentation"
-            or area_percent < 2.0
+            or area_percent < 6.0
             or "fragmented_mask" in warnings
             or "weak_main_component" in warnings
         ):
             return "severe"
-        if area_percent < 4.0 or warnings:
+        if area_percent < 6.0 or warnings:
             return "moderate"
         return "mild"
 
@@ -198,6 +209,7 @@ class ReconstructorAgent(BaseAgent):
         pipeline_name: str,
         file_field: str,
         segmentation_validation: dict,
+        conservation_status: str,
     ) -> tuple[str, dict]:
         out_path = OUTPUT_DIR / f"{task_id}_{pipeline_name}.png"
         async with httpx.AsyncClient(timeout=180.0) as client:
@@ -230,6 +242,7 @@ class ReconstructorAgent(BaseAgent):
                 "endpoint": url,
                 "damage_severity": self._damage_severity(segmentation_validation),
                 "segmentation_validation": segmentation_validation,
+                "conservation_status": conservation_status,
                 "reconstruction_response": {
                     key: value
                     for key, value in payload.items()
@@ -255,6 +268,7 @@ class ReconstructorAgent(BaseAgent):
             "endpoint": url,
             "damage_severity": self._damage_severity(segmentation_validation),
             "segmentation_validation": segmentation_validation,
+            "conservation_status": conservation_status,
             "reconstruction_response": {
                 "content_type": response.headers.get("content-type", ""),
                 "bytes": len(response.content),

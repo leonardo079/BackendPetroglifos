@@ -77,6 +77,8 @@ class ClassifyResponse(BaseModel):
     status: str
     classification: dict = {}
     icanh_pdf_url: str = ""
+    reconstructed_image_path: str = ""
+    reconstruction_assessment: dict = {}
     total_time_ms: int = 0
     message: str = ""
 
@@ -285,6 +287,8 @@ async def classify_sync(
         status=result.get("status", "error"),
         classification=result.get("classification", {}),
         icanh_pdf_url=result.get("icanh_pdf_url", ""),
+        reconstructed_image_path=result.get("reconstructed_image_path", ""),
+        reconstruction_assessment=result.get("reconstruction_assessment", {}),
         total_time_ms=result.get("total_time_ms", 0),
     )
 

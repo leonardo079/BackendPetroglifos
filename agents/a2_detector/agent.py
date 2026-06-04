@@ -37,6 +37,15 @@ _TAXONOMY_MAP = {
 # Confianza mínima para incluir clases alternativas (top-2, top-3) en detected_shapes.
 _ALT_CLASS_THRESHOLD = 0.20
 
+# Escala humana de conservación para complementar la decisión automática.
+_CONSERVATION_SCORE_MAP = {
+    "bueno": 0.0,
+    "regular": 0.33,
+    "malo": 0.75,
+    "critico": 1.0,
+    "crítico": 1.0,
+}
+
 
 class DetectorAgent(BaseAgent):
     name = "a2_detector"
@@ -76,6 +85,11 @@ class DetectorAgent(BaseAgent):
         t0 = time.monotonic()
         image_path: str = input.payload.get("preprocessed_image_path", "") or \
                           input.payload.get("image_path", "")
+        conservation_status = self._normalize_conservation_status(
+            input.payload.get("conservation_status", "Regular")
+        )
+        conservation_score = self._conservation_score(conservation_status)
+        human_reconstruction_recommended = conservation_score >= 0.75
         log.info(
             "a2_detector_input",
             task_id=input.task_id,
@@ -107,6 +121,27 @@ class DetectorAgent(BaseAgent):
         # 2. Deterioro via API Keras /segmentPetroglyph (reemplaza Laplaciano)
         deterioration = await self._check_deterioration_api(image_path)
         detection.update(deterioration)
+        detection.update(
+            {
+                "conservation_status": conservation_status,
+                "conservation_score": conservation_score,
+                "human_reconstruction_recommended": human_reconstruction_recommended,
+                "reconstruction_recommended": (
+                    detection.get("deterioration_detected", False)
+                    or human_reconstruction_recommended
+                ),
+                "reconstruction_assessment": {
+                    "model_deterioration_detected": detection.get("deterioration_detected", False),
+                    "conservation_status": conservation_status,
+                    "conservation_score": conservation_score,
+                    "human_reconstruction_recommended": human_reconstruction_recommended,
+                    "reconstruction_recommended": (
+                        detection.get("deterioration_detected", False)
+                        or human_reconstruction_recommended
+                    ),
+                },
+            }
+        )
 
         elapsed = round((time.monotonic() - t0) * 1000)
         log.info("a2_detector_done",
@@ -114,6 +149,9 @@ class DetectorAgent(BaseAgent):
                  motifs_visible=detection["motifs_visible"],
                  shapes=detection["detected_shapes"],
                  deterioration=detection["deterioration_detected"],
+                 conservation_status=conservation_status,
+                 conservation_score=conservation_score,
+                 human_reconstruction_recommended=human_reconstruction_recommended,
                  segmentation_score=detection.get("segmentation_score"),
                  latency_ms=elapsed)
 
@@ -308,7 +346,7 @@ class DetectorAgent(BaseAgent):
           - segmentation_status == 'weak_segmentation'
           - 'fragmented_mask' en warnings : surcos muy fragmentados
           - 'weak_main_component' en warnings : componente principal débil
-          - area_percent < 2.0          : prácticamente sin petroglifo visible
+          - area_percent < 6.0          : cobertura visible insuficiente para confiar en la lectura
 
         Fallback (API no disponible): asume deterioro para forzar reconstrucción
         y no perderse figuras dañadas.
@@ -335,7 +373,7 @@ class DetectorAgent(BaseAgent):
                 or status == "weak_segmentation"
                 or "fragmented_mask" in warnings
                 or "weak_main_component" in warnings
-                or area_percent < 2.0
+                or area_percent < 6.0
             )
 
             log.info(
@@ -384,6 +422,30 @@ class DetectorAgent(BaseAgent):
                     "deterioration_detected": True,
                 },
             }
+
+    @staticmethod
+    def _normalize_conservation_status(value: object) -> str:
+        if value is None:
+            return "Regular"
+        text = str(value).strip()
+        if not text:
+            return "Regular"
+        lowered = text.lower()
+        if lowered in _CONSERVATION_SCORE_MAP:
+            return "Crítico" if lowered == "crítico" else text.capitalize()
+        if lowered == "critico":
+            return "Crítico"
+        if lowered == "bueno":
+            return "Bueno"
+        if lowered == "regular":
+            return "Regular"
+        if lowered == "malo":
+            return "Malo"
+        return text
+
+    @staticmethod
+    def _conservation_score(status: str) -> float:
+        return float(_CONSERVATION_SCORE_MAP.get(status.lower(), 0.33))
 
     def _normalize_warnings(self, warnings: object) -> list[str]:
         if warnings is None:

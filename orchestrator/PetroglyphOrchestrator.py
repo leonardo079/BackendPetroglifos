@@ -113,6 +113,7 @@ class PetroglyphOrchestrator:
             payload={
                 "image_path": image_path,
                 "preprocessed_image_path": state.get("preprocessed_image_path", ""),
+                "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
             },
         )
         result = await self._a2.run(agent_input)
@@ -122,9 +123,14 @@ class PetroglyphOrchestrator:
         state["motifs_visible"] = result.result.get("motifs_visible", False)
         state["detection_confidence"] = result.result.get("detection_confidence", 0.0)
         state["segmentation_validation"] = result.result.get("segmentation_validation", {})
-        
-        # Guardar info de deterioro para el router
+        state["reconstruction_assessment"] = result.result.get("reconstruction_assessment", {})
+
+        # Guardar señales para el router
         state["_deterioration_detected"] = result.result.get("deterioration_detected", False)
+        state["_reconstruction_recommended"] = result.result.get(
+            "reconstruction_recommended",
+            result.result.get("deterioration_detected", False),
+        )
         
         return state
 
@@ -182,8 +188,10 @@ class PetroglyphOrchestrator:
             task_id=state["petroglyph_id"],
             payload={
                 "preprocessed_image_path": state.get("preprocessed_image_path", ""),
-                "deterioration_detected": state.get("_deterioration_detected", True),
+                "deterioration_detected": state.get("_reconstruction_recommended", state.get("_deterioration_detected", True)),
                 "segmentation_validation": state.get("segmentation_validation", {}),
+                "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
+                "reconstruction_assessment": state.get("reconstruction_assessment", {}),
             },
         )
         result = await self._a5.run(agent_input)
@@ -217,6 +225,7 @@ class PetroglyphOrchestrator:
             "rag_feedback": state.get("a4_rag_feedback", {}),
             "segmentation_validation": state.get("segmentation_validation", {}),
             "reconstruction_diagnostics": state.get("reconstruction_diagnostics", {}),
+            "reconstruction_assessment": state.get("reconstruction_assessment", {}),
             "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),
             "researcher_notes": state["site_metadata"].get("researcher_notes", ""),
         }
@@ -241,6 +250,7 @@ class PetroglyphOrchestrator:
         """
         motifs_visible = state.get("motifs_visible", False)
         deterioration = state.get("_deterioration_detected", False)
+        reconstruction_recommended = state.get("_reconstruction_recommended", deterioration)
 
         # Post-reconstrucción: la imagen ya fue restaurada por A5,
         # continuar con comparación iconográfica sobre la imagen reconstruida.
@@ -248,7 +258,7 @@ class PetroglyphOrchestrator:
             log.info("router_decision", route="a3_comparator", reason="post_reconstruction")
             return "a3_comparator"
 
-        if motifs_visible and not deterioration:
+        if motifs_visible and not reconstruction_recommended:
             log.info("router_decision", route="a3_comparator", reason="motifs_visible")
             return "a3_comparator"
 
@@ -313,6 +323,7 @@ class PetroglyphOrchestrator:
                 "total_time_ms": elapsed,
                 "classification": final_state["a4_taxonomy_result"],
                 "icanh_pdf_url": final_state.get("icanh_pdf_url", ""),
+                "reconstructed_image_path": final_state.get("reconstructed_image_path", ""),
                 "icanh_json": final_state.get("icanh_json", {}),
             }
 

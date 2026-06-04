@@ -1,12 +1,12 @@
-### CONTEXTO ARQUEOLÓGICO RECUPERADO
+### CONTEXTO ARQUEOLOGICO RECUPERADO
 {% for chunk in retrieved_chunks %}
-[{{ loop.index }}] {{ chunk.text }} — Fuente: {{ chunk.source }}
+[{{ loop.index }}] {{ chunk.text }} - Fuente: {{ chunk.source }}
 {% endfor %}
 {% if not retrieved_chunks %}
 No se recuperaron fragmentos del corpus para este caso.
 {% endif %}
 
-### DESCRIPCIÓN DEL MOTIVO
+### DESCRIPCION DEL MOTIVO
 {{ motif_description }}
 
 ### FORMAS DETECTADAS
@@ -15,23 +15,27 @@ No se recuperaron fragmentos del corpus para este caso.
 Sin formas detectadas explicitamente.
 {% endif %}
 
-### COINCIDENCIAS ICONOGRÁFICAS
+### COINCIDENCIAS ICONOGRAFICAS
 {% for match in similarity_matches %}
-- {{ match.reference_name }} | Sitio: {{ match.site_name }} | Taxonomía: {{ match.taxonomy }} | similitud: {{ match.similarity_score }}
+- {{ match.reference_name }} | Sitio: {{ match.site_name }} | Taxonomia: {{ match.taxonomy }} | similitud: {{ match.similarity_score }}
 {% endfor %}
 {% if not similarity_matches %}
 Sin coincidencias iconograficas relevantes en el comparador visual.
 {% endif %}
 
-### INSTRUCCIÓN
+### INSTRUCCION
 Clasifica el petroglifo usando UNICAMENTE estas categorias validas:
 {{ valid_categories | join(" | ") }}
 
 Reglas:
 1) El valor de "taxonomy" debe ser exactamente una de las categorias validas.
 2) "confidence" debe estar entre 0.0 y 1.0.
-3) "justification" debe citar evidencia concreta (contexto recuperado, formas y/o similitudes).
-4) Si el contexto es debil o contradictorio, reduce confidence y explica la incertidumbre.
+3) "justification" debe sonar como un argumento breve y conectado, no como una lista de hechos sueltos.
+4) La justificacion debe seguir esta secuencia: evidencia principal -> comparacion con alternativas -> conclusion.
+5) Cita evidencia concreta, pero integrandola en frases completas.
+6) Si el contexto es debil o contradictorio, reduce confidence y explicita la incertidumbre sin dramatizarla.
+7) Evita repetir exactamente los mismos datos en oraciones consecutivas.
+8) No menciones reconstruccion ni procesos tecnicos ajenos a la clasificacion.
 
 Responde EXCLUSIVAMENTE con un objeto JSON valido (sin texto adicional, sin bloques markdown):
-{"taxonomy": "<una de las categorías anteriores>", "confidence": <float entre 0.0 y 1.0>, "justification": "<razón basada en el contexto arqueológico>"}
+{"taxonomy": "<una de las categorias anteriores>", "confidence": <float entre 0.0 y 1.0>, "justification": "<razon basada en el contexto arqueologico>"}
