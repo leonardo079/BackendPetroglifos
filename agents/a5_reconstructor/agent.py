@@ -19,14 +19,14 @@ class ReconstructorAgent(BaseAgent):
     """
     Invoca la API de reconstrucción externa (Keras U-Net + LaMa inpainting)
     para restaurar petroglifos deteriorados.
-    Si GAN_MOCK_MODE=true retorna la imagen preprocesada como fallback.
+    Si GAN_MOCK_MODE=true retorna la imagen de entrada como fallback.
     """
     name = "a5_reconstructor"
 
     async def run(self, input: AgentInput) -> AgentOutput:
         t0 = time.monotonic()
-        image_path: str = input.payload.get("preprocessed_image_path", "") or \
-                          input.payload.get("image_path", "")
+        image_path: str = input.payload.get("image_path", "") or \
+                          input.payload.get("preprocessed_image_path", "")
         deterioration: bool = input.payload.get("deterioration_detected", True)
         segmentation_validation: dict = input.payload.get("segmentation_validation", {})
         conservation_status: str = str(input.payload.get("conservation_status", "Regular"))
@@ -94,7 +94,7 @@ class ReconstructorAgent(BaseAgent):
             )
         except Exception as e:
             log.error("a5_reconstructor_error", error=str(e), task_id=input.task_id)
-            # Fallback: usar imagen preprocesada
+            # Fallback: usar la misma imagen de entrada.
             return AgentOutput(
                 task_id=input.task_id,
                 agent_name=self.name,
@@ -163,7 +163,7 @@ class ReconstructorAgent(BaseAgent):
         severe_damage = (
             score < 0
             or status == "weak_segmentation"
-            or area_percent < 6.0
+            or area_percent < 4.0
             or "fragmented_mask" in warnings
             or "weak_main_component" in warnings
         )
@@ -172,14 +172,14 @@ class ReconstructorAgent(BaseAgent):
 
         if visual_first:
             return [
-                ("reconstructVisualAssisted", settings.reconstruction_visual_assisted_url, "file"),
+                ("reconstructVisualAssistedPng", settings.reconstruction_visual_assisted_url, "file"),
                 ("reconstructFull", f"{settings.reconstruction_api_base_url}/reconstructFull", "file"),
                 ("legacy_reconstruct", settings.gan_api_url, "image"),
             ]
 
         return [
             ("reconstructFull", f"{settings.reconstruction_api_base_url}/reconstructFull", "file"),
-            ("reconstructVisualAssisted", settings.reconstruction_visual_assisted_url, "file"),
+            ("reconstructVisualAssistedPng", settings.reconstruction_visual_assisted_url, "file"),
             ("legacy_reconstruct", settings.gan_api_url, "image"),
         ]
 
@@ -192,12 +192,12 @@ class ReconstructorAgent(BaseAgent):
         if (
             score < 0
             or status == "weak_segmentation"
-            or area_percent < 6.0
+            or area_percent < 4.0
             or "fragmented_mask" in warnings
             or "weak_main_component" in warnings
         ):
             return "severe"
-        if area_percent < 6.0 or warnings:
+        if area_percent < 4.0 or warnings:
             return "moderate"
         return "mild"
 
@@ -277,7 +277,7 @@ class ReconstructorAgent(BaseAgent):
         return str(out_path), diagnostics
 
     async def _mock_reconstruct(self, image_path: str, task_id: str) -> str:
-        """Mock: copia la imagen preprocesada como si fuera la reconstruida."""
+        """Mock: copia la imagen de entrada como si fuera la reconstruida."""
         if not image_path or not Path(image_path).exists():
             return image_path
         out_path = OUTPUT_DIR / f"{task_id}_mock_reconstructed.png"

@@ -190,7 +190,7 @@ class PetroglyphOrchestrator:
         agent_input = AgentInput(
             task_id=state["petroglyph_id"],
             payload={
-                "preprocessed_image_path": state.get("preprocessed_image_path", ""),
+                "image_path": state.get("raw_image_path", ""),
                 "deterioration_detected": state.get("_reconstruction_recommended", state.get("_deterioration_detected", True)),
                 "segmentation_validation": state.get("segmentation_validation", {}),
                 "conservation_status": state["site_metadata"].get("conservation_status", "Regular"),

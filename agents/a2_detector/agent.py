@@ -349,7 +349,7 @@ class DetectorAgent(BaseAgent):
           - segmentation_status == 'weak_segmentation'
           - 'fragmented_mask' en warnings : surcos muy fragmentados
           - 'weak_main_component' en warnings : componente principal débil
-          - area_percent < 6.0          : cobertura visible insuficiente
+          - area_percent < 4.0          : cobertura visible insuficiente
 
         2. Daño de la figura (/segmentDamagePytorch). Se cruza la máscara de daño con
            la máscara de la figura y se calcula la fracción de la figura dañada. Si
@@ -382,7 +382,7 @@ class DetectorAgent(BaseAgent):
                 or status == "weak_segmentation"
                 or "fragmented_mask" in warnings
                 or "weak_main_component" in warnings
-                or area_percent < 6.0
+              or area_percent < 4.0
             )
 
             # Señal de daño: cruzar la máscara de la figura con la máscara de daño.

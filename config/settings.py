@@ -38,14 +38,14 @@ class Settings(BaseSettings):
     # Reconstruction API (petroglyph-service-reconstruction-api)
     # En Docker: http://reconstruction:8001  |  Local: http://localhost:8001
     reconstruction_api_base_url: str = "http://localhost:8001"
-    reconstruction_visual_assisted_url: str = "http://localhost:8001/reconstructVisualAssisted"
+    reconstruction_visual_assisted_url: str = "http://localhost:8001/reconstructVisualAssistedPng"
     gan_api_url: str = "http://localhost:8001/reconstruct"
     gan_api_key: str = ""
     gan_mock_mode: bool = True
     # Umbral de daño (fracción de la figura dañada, 0.0-1.0) para forzar
     # reconstrucción automática en A5. Se mide cruzando la máscara de la figura
     # (/segmentPetroglyph) con la máscara de daño (/segmentDamagePytorch).
-    damage_reconstruction_threshold: float = 0.70  # env: DAMAGE_RECONSTRUCTION_THRESHOLD
+    damage_reconstruction_threshold: float = 0.80  # env: DAMAGE_RECONSTRUCTION_THRESHOLD
 
     # Telegram
     telegram_bot_token: str = ""
@@ -77,9 +77,9 @@ class Settings(BaseSettings):
             derived_base = f"{parsed_gan.scheme}://{parsed_gan.netloc}"
             if self.reconstruction_api_base_url == "http://localhost:8001":
                 self.reconstruction_api_base_url = derived_base
-            if self.reconstruction_visual_assisted_url == "http://localhost:8001/reconstructVisualAssisted":
+            if self.reconstruction_visual_assisted_url == "http://localhost:8001/reconstructVisualAssistedPng":
                 self.reconstruction_visual_assisted_url = (
-                    f"{self.reconstruction_api_base_url.rstrip('/')}/reconstructVisualAssisted"
+                    f"{self.reconstruction_api_base_url.rstrip('/')}/reconstructVisualAssistedPng"
                 )
         return self
 
