@@ -225,7 +225,32 @@ async def _enqueue_and_poll(
         celery_state = data.get("celery_state", "")
 
         if celery_state == "SUCCESS":
-            result = data.get("result", {})
+            result = data.get("result") or {}
+            if not isinstance(result, dict):
+                log.error(
+                    "bot_task_success_without_payload",
+                    task_id=api_task_id,
+                    payload_type=type(result).__name__,
+                    payload_preview=str(result)[:200],
+                )
+                await app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    text=ERROR_CLASSIFICATION.format(task_id=api_task_id),
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
+            if not result:
+                log.error("bot_task_success_empty_result", task_id=api_task_id)
+                await app.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_message_id,
+                    text=ERROR_CLASSIFICATION.format(task_id=api_task_id),
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+
             await _send_result(
                 app, chat_id, status_message_id,
                 api_task_id, result, site, municipality,
@@ -262,7 +287,37 @@ async def _send_result(
     municipality: str,
 ) -> None:
     """Formatea el resultado de la clasificaciÃ³n y lo envÃ­a al usuario."""
-    classification = result.get("classification", {})
+    if not isinstance(result, dict):
+        log.error(
+            "bot_send_result_invalid_payload",
+            task_id=task_id,
+            payload_type=type(result).__name__,
+            payload_preview=str(result)[:200],
+        )
+        await app.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_message_id,
+            text=ERROR_CLASSIFICATION.format(task_id=task_id),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    classification = result.get("classification") or {}
+    if not isinstance(classification, dict):
+        log.error(
+            "bot_send_result_invalid_classification",
+            task_id=task_id,
+            payload_type=type(classification).__name__,
+            payload_preview=str(classification)[:200],
+        )
+        await app.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_message_id,
+            text=ERROR_CLASSIFICATION.format(task_id=task_id),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
     taxonomy = classification.get("taxonomy", "Indeterminado")
     confidence_raw = float(classification.get("confidence", 0.0))
     confidence = round(confidence_raw * 100, 1)

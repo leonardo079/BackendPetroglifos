@@ -7,15 +7,22 @@ Flujo de ejecución:
     └─ deterioro → A5 (reconstruir) → A2 (detectar) → A4 → A6 → END
 """
 from __future__ import annotations
+import json
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 import structlog
 from typing import Literal
 from langgraph.graph import StateGraph, END
 from orchestrator.state.graph_state import PetroglyphState
 from agents.base_agent import AgentInput
 from core.domain.site_normalization import normalize_site_metadata
+from core.metrics import build_metrics_report, load_run_records
 
 log = structlog.get_logger(__name__)
+METRICS_DIR = Path("storage/metrics")
+METRICS_DIR.mkdir(parents=True, exist_ok=True)
+RUNS_METRICS_PATH = METRICS_DIR / "runs.jsonl"
 
 
 class PetroglyphOrchestrator:
@@ -123,6 +130,7 @@ class PetroglyphOrchestrator:
         
         state["motif_description"] = result.result.get("motif_description", "")
         state["detected_shapes"] = result.result.get("detected_shapes", [])
+        state["bounding_boxes"] = result.result.get("bounding_boxes", [])
         state["motifs_visible"] = result.result.get("motifs_visible", False)
         state["detection_confidence"] = result.result.get("detection_confidence", 0.0)
         state["segmentation_validation"] = result.result.get("segmentation_validation", {})
@@ -320,6 +328,31 @@ class PetroglyphOrchestrator:
                      taxonomy=final_state["a4_taxonomy_result"].get("taxonomy"),
                      confidence=final_state["a4_taxonomy_result"].get("confidence"))
 
+            self._append_run_metrics(
+                {
+                    "task_id": task_id,
+                    "image_id": task_id,
+                    "status": "success",
+                    "autonomous_success": True,
+                    "total_time_ms": elapsed,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    "raw_image_path": raw_image_path,
+                    "preprocessed_image_path": final_state.get("preprocessed_image_path", ""),
+                    "reconstructed_image_path": final_state.get("reconstructed_image_path", ""),
+                    "motifs_visible": final_state.get("motifs_visible", False),
+                    "reconstruction_used": bool(final_state.get("reconstructed_image_path")),
+                    "generated_ficha": bool(final_state.get("icanh_pdf_url")),
+                    "taxonomy": final_state["a4_taxonomy_result"].get("taxonomy"),
+                    "confidence": final_state["a4_taxonomy_result"].get("confidence"),
+                    "detection_pred_boxes": final_state.get("bounding_boxes", []),
+                    "detection_gt_boxes": self._load_ground_truth_boxes(
+                        raw_image_path,
+                        normalized_site_metadata,
+                    ),
+                }
+            )
+            self._refresh_metrics_report()
+
             return {
                 "task_id": task_id,
                 "status": "success",
@@ -333,12 +366,73 @@ class PetroglyphOrchestrator:
         except Exception as e:
             elapsed = round((time.monotonic() - t0) * 1000)
             log.error("orchestrator_error", task_id=task_id, error=str(e), latency_ms=elapsed)
+            self._append_run_metrics(
+                {
+                    "task_id": task_id,
+                    "image_id": task_id,
+                    "status": "error",
+                    "autonomous_success": False,
+                    "total_time_ms": elapsed,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    "raw_image_path": raw_image_path,
+                    "error": str(e),
+                }
+            )
+            self._refresh_metrics_report()
             return {
                 "task_id": task_id,
                 "status": "error",
                 "error": str(e),
                 "total_time_ms": elapsed,
             }
+
+    def _append_run_metrics(self, record: dict) -> None:
+        """Registra una ejecucion para evaluar tiempo y exito autonomo."""
+        try:
+            with RUNS_METRICS_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            log.warning("metrics_write_failed", error=str(exc), path=str(RUNS_METRICS_PATH))
+
+    def _refresh_metrics_report(self) -> None:
+        """Recalcula y guarda el reporte acumulado despues de cada corrida."""
+        try:
+            records = load_run_records(RUNS_METRICS_PATH)
+            report = build_metrics_report(records)
+            report_path = METRICS_DIR / "report.json"
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            log.warning("metrics_report_refresh_failed", error=str(exc))
+
+    def _load_ground_truth_boxes(self, raw_image_path: str, site_metadata: dict) -> list[dict]:
+        """
+        Carga anotaciones ground truth sin obligar a separar archivos manualmente.
+
+        Orden de preferencia:
+        1. `site_metadata["ground_truth_boxes"]`
+        2. Archivo lateral JSON con el mismo nombre base de la imagen
+        """
+        boxes = site_metadata.get("ground_truth_boxes", []) or []
+        if boxes:
+            return boxes
+
+        image_path = Path(raw_image_path)
+        sidecar_candidates = [
+            image_path.with_suffix(".json"),
+            image_path.with_name(f"{image_path.stem}.boxes.json"),
+        ]
+        for sidecar in sidecar_candidates:
+            if not sidecar.exists():
+                continue
+            try:
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data = data.get("ground_truth_boxes") or data.get("boxes") or []
+                if isinstance(data, list):
+                    return data
+            except Exception as exc:
+                log.warning("ground_truth_sidecar_failed", path=str(sidecar), error=str(exc))
+        return []
 
 
 # ── Factory para instanciar el orquestador con dependencias ──────────────────

@@ -41,6 +41,7 @@ dependencies = [
     "pyvis>=0.3",
     "matplotlib>=3.9",
     "python-louvain>=0.16",        # PyPI: python-louvain → `from community import best_partition`
+    "scipy>=1.10",
     # HTTP y async
     "httpx>=0.27",
     "tenacity>=8.3",              # retry con backoff exponencial
