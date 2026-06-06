@@ -360,6 +360,7 @@ class PetroglyphOrchestrator:
                 "classification": final_state["a4_taxonomy_result"],
                 "icanh_pdf_url": final_state.get("icanh_pdf_url", ""),
                 "reconstructed_image_path": final_state.get("reconstructed_image_path", ""),
+                "reconstruction_assessment": final_state.get("reconstruction_assessment", {}),
                 "icanh_json": final_state.get("icanh_json", {}),
             }
 
