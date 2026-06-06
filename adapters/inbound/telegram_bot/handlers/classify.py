@@ -1,10 +1,10 @@
 ﻿"""
-Handler de conversaciÃ³n para clasificaciÃ³n de petroglifos vÃ­a fotografÃ­a.
+Handler de conversación para clasificación de petroglifos vía fotografía.
 
-Flujo de la conversaciÃ³n:
-    [foto] â†’ SITE_NAME â†’ MUNICIPALITY â†’ CONSERVATION â†’ [lanza pipeline async]
+Flujo de la conversación:
+    [foto] → SITE_NAME → MUNICIPALITY → CONSERVATION → [lanza pipeline async]
 
-Una vez recopilados los metadatos, la imagen se encola a travÃ©s de la API REST
+Una vez recopilados los metadatos, la imagen se encola a través de la API REST
 (POST /classify/upload) y el bot hace polling del resultado (GET /tasks/{id})
 en segundo plano, editando el mensaje de estado cuando termina.
 """
@@ -45,7 +45,7 @@ log = structlog.get_logger(__name__)
 UPLOAD_DIR = Path("storage/uploads/telegram")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Estados de la conversaciÃ³n (exportados para el ConversationHandler en bot.py)
+# Estados de la conversación (exportados para el ConversationHandler en bot.py)
 SITE_NAME, MUNICIPALITY, CONSERVATION = range(3)
 
 _API = settings.api_base_url.rstrip("/")
@@ -54,23 +54,23 @@ _CONSERVATION_MAP: dict[str, str] = {
     "bueno": "Bueno",
     "regular": "Regular",
     "malo": "Malo",
-    "crÃ­tico": "CrÃ­tico",
-    "critico": "CrÃ­tico",
+    "crítico": "Crítico",
+    "critico": "Crítico",
 }
 
-# ConfiguraciÃ³n del polling
+# Configuración del polling
 _POLL_INTERVAL_SECONDS = 10
 _MAX_POLL_SECONDS = 300  # 5 minutos
 
 
-# â”€â”€ Pasos de la conversaciÃ³n â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Pasos de la conversación ──────────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Punto de entrada: el usuario envÃ­a una fotografÃ­a.
+    Punto de entrada: el usuario envía una fotografía.
     Guarda el file_id en user_data y pide el nombre del sitio.
     """
-    photo = update.message.photo[-1]  # Tomar la versiÃ³n de mayor resoluciÃ³n
+    photo = update.message.photo[-1]  # Tomar la versión de mayor resolución
     context.user_data.clear()
     context.user_data["photo_file_id"] = photo.file_id
     context.user_data["task_id"] = str(uuid.uuid4())
@@ -92,7 +92,7 @@ async def handle_site_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def handle_municipality(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Guarda el municipio y pide el estado de conservaciÃ³n."""
+    """Guarda el municipio y pide el estado de conservación."""
     context.user_data["municipality"] = canonicalize_municipality(update.message.text.strip())
     await update.message.reply_text(ASK_CONSERVATION, parse_mode=ParseMode.HTML)
     return CONSERVATION
@@ -100,14 +100,14 @@ async def handle_municipality(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_conservation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Valida el estado de conservaciÃ³n, descarga la foto de Telegram,
-    envÃ­a mensaje de "procesando" y lanza el pipeline en segundo plano.
+    Valida el estado de conservación, descarga la foto de Telegram,
+    envía mensaje de "procesando" y lanza el pipeline en segundo plano.
     """
     raw = update.message.text.strip().lower()
     conservation = _CONSERVATION_MAP.get(raw)
     if not conservation:
         await update.message.reply_text(INVALID_CONSERVATION, parse_mode=ParseMode.HTML)
-        return CONSERVATION  # Repetir este estado hasta que sea vÃ¡lido
+        return CONSERVATION  # Repetir este estado hasta que sea válido
 
     task_id: str = context.user_data["task_id"]
     file_id: str = context.user_data["photo_file_id"]
@@ -145,13 +145,13 @@ async def handle_conservation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancela la conversaciÃ³n en curso."""
+    """Cancela la conversación en curso."""
     context.user_data.clear()
     await update.message.reply_text(CANCELLED, parse_mode=ParseMode.HTML)
     return ConversationHandler.END
 
 
-# â”€â”€ Pipeline asÃ­ncrono en segundo plano â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Pipeline asíncrono en segundo plano ──────────────────────────────────────
 
 async def _enqueue_and_poll(
     app,
@@ -164,12 +164,12 @@ async def _enqueue_and_poll(
     conservation_status: str,
 ) -> None:
     """
-    Encola la clasificaciÃ³n vÃ­a POST /classify/upload y hace polling de
+    Encola la clasificación vía POST /classify/upload y hace polling de
     GET /tasks/{task_id} hasta obtener el resultado o agotar el tiempo.
 
     Al terminar, edita el mensaje de estado con el resultado y adjunta el PDF.
     """
-    # â”€â”€ 1. Encolar tarea â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 1. Encolar tarea ──────────────────────────────────────────────────────
     api_task_id = task_id
     try:
         img_path = Path(image_path)
@@ -207,7 +207,7 @@ async def _enqueue_and_poll(
 
     log.info("bot_task_enqueued", task_id=api_task_id, site=site)
 
-    # â”€â”€ 2. Polling del resultado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── 2. Polling del resultado ──────────────────────────────────────────────
     elapsed = 0
     while elapsed < _MAX_POLL_SECONDS:
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -219,7 +219,7 @@ async def _enqueue_and_poll(
                 poll_resp.raise_for_status()
                 data = poll_resp.json()
         except (httpx.RequestError, httpx.HTTPStatusError):
-            # Error transitorio â€” continuar intentando
+            # Error transitorio — continuar intentando
             continue
 
         celery_state = data.get("celery_state", "")
@@ -267,7 +267,7 @@ async def _enqueue_and_poll(
             )
             return
 
-    # â”€â”€ Timeout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Timeout ───────────────────────────────────────────────────────────────
     log.warning("bot_task_timeout", task_id=api_task_id, elapsed_s=elapsed)
     await app.bot.edit_message_text(
         chat_id=chat_id,
@@ -275,6 +275,21 @@ async def _enqueue_and_poll(
         text=ERROR_TIMEOUT.format(task_id=api_task_id),
         parse_mode=ParseMode.HTML,
     )
+
+
+def _get_conservation_score(reconstruction_assessment: dict) -> float:
+    """
+    Extrae el conservation_score del assessment evitando el bug donde
+    0.0 (estado "Bueno") era reemplazado por el default 0.33.
+
+    El problema original era:
+        float(reconstruction_assessment.get("conservation_score", 0.33) or 0.33)
+    El operador `or` convierte 0.0 en 0.33 porque 0.0 es falsy en Python.
+    """
+    raw = reconstruction_assessment.get("conservation_score")
+    if raw is None:
+        return 0.33  # Default solo cuando el campo no existe
+    return float(raw)
 
 
 async def _send_result(
@@ -286,7 +301,7 @@ async def _send_result(
     site: str,
     municipality: str,
 ) -> None:
-    """Formatea el resultado de la clasificaciÃ³n y lo envÃ­a al usuario."""
+    """Formatea el resultado de la clasificación y lo envía al usuario."""
     if not isinstance(result, dict):
         log.error(
             "bot_send_result_invalid_payload",
@@ -321,45 +336,47 @@ async def _send_result(
     taxonomy = classification.get("taxonomy", "Indeterminado")
     confidence_raw = float(classification.get("confidence", 0.0))
     confidence = round(confidence_raw * 100, 1)
-    justification = classification.get("justification", "Sin informaciÃ³n.")
+    justification = classification.get("justification", "Sin información.")
     requires_validation = classification.get("requires_validation", True)
 
-    # Truncar justificaciÃ³n muy larga para respetar el lÃ­mite de Telegram (4096 chars)
+    # Truncar justificación muy larga para respetar el límite de Telegram (4096 chars)
     if len(justification) > 500:
-        justification = justification[:497] + "â€¦"
+        justification = justification[:497] + "…"
 
     validation_flag = VALIDATION_WARNING if requires_validation else ""
     text = RESULT_OK.format(
         site=site or "Sin nombre",
-        municipality=municipality or "â€”",
+        municipality=municipality or "—",
         taxonomy=taxonomy,
         confidence=confidence,
         validation_flag=validation_flag,
         justification=justification,
     )
 
-    # AÃ±adir similitudes iconogrÃ¡ficas (mÃ¡ximo 3 para no exceder el lÃ­mite)
+    # Añadir similitudes iconográficas (máximo 3 para no exceder el límite)
     similarity_matches = classification.get("similarity_matches", [])
     if similarity_matches:
         match_lines = "\n".join(
-            f"  â€¢ <b>{m['site_name']}</b> ({m.get('municipality', 'â€”')}) "
-            f"â€” {round(m['similarity_score'] * 100, 1)}% [{m.get('taxonomy', '?')}]"
+            f"  • <b>{m['site_name']}</b> ({m.get('municipality', '—')}) "
+            f"— {round(m['similarity_score'] * 100, 1)}% [{m.get('taxonomy', '?')}]"
             for m in similarity_matches[:3]
         )
         text += SIMILARITY_BLOCK.format(matches=match_lines)
 
-    # En este punto 'text' = clasificación (RESULT_OK + similitudes iconográficas).
     classification_text = text
 
     pdf_local_path = result.get("icanh_pdf_url", "")
     reconstructed_image_path = result.get("reconstructed_image_path", "")
     reconstruction_assessment = result.get("reconstruction_assessment", {}) or {}
     conservation_status = reconstruction_assessment.get("conservation_status", "Regular")
-    conservation_score = float(reconstruction_assessment.get("conservation_score", 0.33) or 0.33)
+
+    # FIX: usar helper para evitar que 0.0 ("Bueno") se convierta en 0.33
+    conservation_score = _get_conservation_score(reconstruction_assessment)
+
     human_reconstruction = bool(reconstruction_assessment.get("human_reconstruction_recommended", False))
     model_reconstruction = bool(reconstruction_assessment.get("model_deterioration_detected", False))
 
-    # Bloque informativo de reconstrucción (estado + señales).
+    # Bloque informativo de reconstrucción (estado + señales)
     if reconstructed_image_path:
         recon_text = (
             "🛠️ <b>Reconstrucción realizada</b>\n"
@@ -410,7 +427,7 @@ async def _send_result(
                         document=f,
                         filename=f"ficha_icanh_{task_id}.pdf",
                         caption="Ficha ICANH generada automaticamente.",
-                )
+                    )
                 log.info("bot_pdf_sent", task_id=task_id)
             except Exception as exc:
                 log.warning("bot_pdf_send_error", task_id=task_id, error=str(exc))
@@ -429,7 +446,7 @@ async def _send_result(
             except Exception as exc:
                 log.warning("bot_reconstructed_image_send_error", task_id=task_id, error=str(exc))
 
-        # AL FINAL: el mensaje de clasificación (el mismo que en el flujo sin reconstrucción).
+        # AL FINAL: el mensaje de clasificación
         try:
             await app.bot.send_message(
                 chat_id=chat_id,
