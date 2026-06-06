@@ -10,7 +10,13 @@ from PIL import Image
 from agents.base_agent import BaseAgent, AgentInput, AgentOutput
 from adapters.outbound.vector_store.pgvector_adapter import ImageVectorAdapter
 from graphs.social_graph import PetroglyphSocialGraph
-from core.domain.site_normalization import canonicalize_municipality, canonicalize_site_name
+from core.domain.site_normalization import (
+    canonicalize_municipality,
+    canonicalize_site_name,
+    geo_rerank,
+    site_coords,
+    GEO_ALPHA,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -74,17 +80,22 @@ class ComparatorAgent(BaseAgent):
         current_municipality: str = canonicalize_municipality(input.payload.get("municipality", ""))
         site_id: str = input.payload.get("site_id", "")
 
+        # Coordenadas GPS explícitas (opcionales, tienen precedencia sobre el catálogo)
+        gps: dict = input.payload.get("gps_coordinates", {}) or {}
+        query_lat: float = float(gps.get("lat", 0.0) or gps.get("latitude", 0.0) or 0.0)
+        query_lon: float = float(gps.get("lon", 0.0) or gps.get("longitude", 0.0) or 0.0)
+
         matches: list[dict] = []
 
         # 1. Extraer embedding de la imagen actual
         embedding = extract_image_embedding(image_path)
 
         if embedding and self._image_vector:
-            # 2. Buscar similitudes en el corpus de referencia
+            # 2. Buscar similitudes en el corpus de referencia (por iconografía)
             raw_matches = await self._image_vector.similarity_search(
                 query_vector=embedding, k=5, min_similarity=0.60
             )
-            matches = [
+            visual_matches = [
                 {
                     "site_name": canonicalize_site_name(m["site_name"]),
                     "municipality": canonicalize_municipality(m["municipality"]),
@@ -96,12 +107,48 @@ class ComparatorAgent(BaseAgent):
                 for m in raw_matches
             ]
 
-            # 3. Actualizar el grafo en memoria usando nombres de sitio como IDs de nodo.
-            # Esto garantiza consistencia con la reconstrucción del grafo desde la BD.
+            # 3. Reranking geográfico: priorizar sitios cercanos al petroglifo consultado.
+            #    El score visual se conserva intacto; se añade geo_adjusted_score y
+            #    distance_km para trazabilidad en A4/A6.
+            origin_known = bool(query_lat and query_lon) or bool(
+                site_coords(current_site, current_municipality)
+            )
+            if origin_known:
+                matches = geo_rerank(
+                    visual_matches,
+                    query_site=current_site,
+                    query_municipality=current_municipality,
+                    query_lat=query_lat,
+                    query_lon=query_lon,
+                    alpha=GEO_ALPHA,
+                )
+                log.info(
+                    "a3_geo_rerank_applied",
+                    site=current_site,
+                    municipality=current_municipality,
+                    matches_before=len(visual_matches),
+                    matches_after=len(matches),
+                    top_match_site=matches[0]["site_name"] if matches else None,
+                    top_match_dist_km=matches[0].get("distance_km") if matches else None,
+                    top_geo_score=matches[0].get("geo_adjusted_score") if matches else None,
+                )
+            else:
+                # Sitio desconocido: devolver matches solo por similitud visual
+                matches = visual_matches
+                log.info(
+                    "a3_geo_rerank_skipped",
+                    reason="site_not_in_catalog_and_no_gps",
+                    site=current_site,
+                    municipality=current_municipality,
+                )
+
+            # 4. Actualizar el grafo en memoria usando nombres de sitio como IDs de nodo.
             node_a = current_site
             if self._social_graph and node_a and matches:
                 for match in matches:
                     node_b = canonicalize_site_name(match.get("site_name", ""))
+                    # Para el grafo usamos similarity_score (iconográfico puro),
+                    # no el score ajustado geográficamente.
                     if node_b and match["similarity_score"] >= 0.70:
                         self._social_graph.add_or_update_edge(
                             site_a=node_a,
@@ -110,7 +157,7 @@ class ComparatorAgent(BaseAgent):
                             taxonomy=match.get("taxonomy", ""),
                         )
 
-            # 4. Persistir aristas en la tabla site_graph_edges (si hay sesión disponible).
+            # 5. Persistir aristas en site_graph_edges (si hay sesión disponible).
             if self._session and (current_site or site_id) and matches:
                 await self._persist_edges(
                     current_site_name=current_site,
@@ -126,6 +173,7 @@ class ComparatorAgent(BaseAgent):
             task_id=input.task_id,
             matches=len(matches),
             edges_persisted=edges_persisted,
+            geo_rerank_applied=origin_known if embedding and self._image_vector else False,
             latency_ms=elapsed,
         )
 
@@ -139,6 +187,7 @@ class ComparatorAgent(BaseAgent):
                 "embedding_available": embedding is not None,
                 "graph_updated": self._social_graph is not None and len(matches) > 0,
                 "edges_persisted": edges_persisted,
+                "geo_rerank_applied": origin_known if embedding and self._image_vector else False,
             },
         )
 
@@ -167,12 +216,10 @@ class ComparatorAgent(BaseAgent):
         try:
             new_site = RupestranSiteModel(name=name, municipality=municipality)
             self._session.add(new_site)
-            await self._session.flush()  # obtener el ID generado sin hacer commit
+            await self._session.flush()
             log.debug("a3_site_auto_created", name=name)
             return new_site.id
         except IntegrityError:
-            # Condición de carrera: otro worker creó el sitio entre nuestro SELECT y el INSERT.
-            # Revertimos el savepoint de flush y releemos el registro ya existente.
             await self._session.rollback()
             result = await self._session.execute(
                 select(RupestranSiteModel).where(RupestranSiteModel.name == name).limit(1)
@@ -189,12 +236,10 @@ class ComparatorAgent(BaseAgent):
         matches: list[dict],
     ) -> None:
         """
-        Persiste las aristas de similitud (score >= 0.70) en site_graph_edges.
+        Persiste las aristas de similitud (score visual >= 0.70) en site_graph_edges.
 
-        - Si el sitio no existe en rupestrian_sites, lo crea automáticamente.
-        - Normaliza el orden de los UUIDs para cumplir la restricción UNIQUE.
-        - Usa flush() en lugar de commit() para no interferir con la transacción
-          del pipeline (el commit lo hace A4 o el contexto de la tarea Celery).
+        Usa `similarity_score` (iconográfico puro) como peso del grafo,
+        no el score ajustado geográficamente.
         """
         from sqlalchemy import select, and_
         from infrastructure.database.models.models import RupestranSiteModel, SiteGraphEdge
@@ -202,7 +247,7 @@ class ComparatorAgent(BaseAgent):
         try:
             current_site_name = canonicalize_site_name(current_site_name)
             current_municipality = canonicalize_municipality(current_municipality)
-            # Resolver UUID del sitio que se está analizando
+
             if current_site_id and current_site_id.count("-") == 4:
                 site_a_uuid = current_site_id
             else:
@@ -230,8 +275,6 @@ class ComparatorAgent(BaseAgent):
                     continue
 
                 taxonomy = match.get("taxonomy", "")
-
-                # Normalizar orden para la restricción UNIQUE(site_a_id, site_b_id)
                 id_a, id_b = sorted([site_a_uuid, site_b_uuid])
 
                 existing = (await self._session.execute(
@@ -244,7 +287,6 @@ class ComparatorAgent(BaseAgent):
                 )).scalar_one_or_none()
 
                 if existing:
-                    # Promedio acumulativo del peso
                     n = existing.evidence_count
                     existing.weight = round((existing.weight * n + score) / (n + 1), 4)
                     existing.evidence_count = n + 1

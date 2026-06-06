@@ -146,15 +146,15 @@ class PetroglyphOrchestrator:
         return state
 
     async def _run_a3(self, state: PetroglyphState) -> PetroglyphState:
-        """A3: Comparar iconográficamente."""
+        """A3: Comparar iconográficamente con reranking geográfico."""
         log.info("langgraph_node", node="a3_comparator", task_id=state["petroglyph_id"])
-
+ 
         # Usar la imagen reconstruida si existe (flujo post-A5), sino la preprocesada
         best_image = (
             state.get("reconstructed_image_path")
             or state.get("preprocessed_image_path", "")
         )
-
+ 
         agent_input = AgentInput(
             task_id=state["petroglyph_id"],
             payload={
@@ -162,10 +162,13 @@ class PetroglyphOrchestrator:
                 "site": state["site_metadata"].get("site", ""),
                 "municipality": state["site_metadata"].get("municipality", ""),
                 "site_id": state["site_metadata"].get("site_id", ""),
+                # Pasar coordenadas GPS para reranking geográfico en A3.
+                # Si el usuario no las aporta, A3 usa el catálogo interno.
+                "gps_coordinates": state["site_metadata"].get("gps_coordinates", {}),
             },
         )
         result = await self._a3.run(agent_input)
-        
+ 
         state["similarity_matches"] = result.result.get("similarity_matches", [])
         return state
 
